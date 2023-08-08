@@ -1,0 +1,128 @@
+# Start from a base image with CUDA and cuDNN installed
+FROM nvidia/cuda:11.2.0-cudnn8-devel-ubuntu20.04
+
+# Set up Python 3.8
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y python3.8 python3.8-dev python3-pip python3.8-venv
+
+# Update pip
+RUN  apt-get install -y curl && \
+     curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+     python3.8 get-pip.py && \
+     rm -f /usr/bin/pip && \
+     ln -s pip3 /usr/bin/pip
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.8 1
+    
+# Install TensorFlow, and correct protobuf version
+# RUN pip install tensorflow-gpu==2.7.0
+
+
+# Install git
+#  apt-get update && \
+#    apt-get upgrade -y && \
+RUN apt-get install -y git
+
+# use https protocol
+RUN git config --global url.https://github.com/.insteadOf git://github.com/
+
+# install mujoco-py
+RUN apt-get install unzip
+# Dependency
+RUN apt-get install -y libosmesa6-dev
+RUN apt-get install -y libgl1-mesa-dev
+RUN apt-get install -y patchelf
+RUN apt-get install nano
+
+# mujoco 200 for policy running
+RUN mkdir -p root/.mujoco && \
+    curl -O https://www.roboti.us/download/mujoco200_linux.zip  && \
+    unzip mujoco200_linux.zip -d root/.mujoco &&\
+    mv root/.mujoco/mujoco200_linux root/.mujoco/mujoco200 &&\
+    rm mujoco200_linux.zip &&\
+    curl -O https://www.roboti.us/file/mjkey.txt && \
+    mv mjkey.txt root/.mujoco/mjkey.txt
+
+#mujoco150 for eval script
+RUN curl -O https://www.roboti.us/download/mjpro150_linux.zip && \
+    unzip mjpro150_linux.zip -d root/.mujoco &&\
+#   mv root/.mujoco/mjpro150 root/.mujoco/mjpro150 &&\
+    rm mjpro150_linux.zip
+
+#ENV MUJOCO_PY_MUJOCO_PATH=/root/.mujoco/mujoco200
+#ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mujoco200/bin
+RUN pip install virtualenv
+
+# next setup two venvs, one for the policies and one for the eval script
+RUN python3.8 -m venv /envs/policies_d4rl
+RUN git clone https://github.com/HyberionBrew/deep_ope.git
+RUN /bin/bash -c "source /envs/policies_d4rl/bin/activate && \
+    export MUJOCO_PY_MUJOCO_PATH=/root/.mujoco/mujoco200 && \
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mujoco200/bin && \
+    pip install mujoco-py==2.0.2.13 && \
+    pip install -r deep_ope/requirements.txt && \
+    pip install 'protobuf<3.21pyt.0'"
+RUN python3.8 -m venv /envs/eval
+RUN git clone --depth 1 --filter=blob:none https://github.com/deepmind/deepmind-research.git
+
+RUN /bin/bash -c "source /envs/eval/bin/activate && \
+                pip install gsutil && \
+                gsutil -m cp -r gs://gresearch/deep-ope/d4rl /tmp && \
+                git clone --depth 1 --filter=blob:none https://github.com/google-research/google-research.git && \
+                cd google-research && \
+                git sparse-checkout init --cone && \
+                git sparse-checkout set policy_eval && \
+                export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mjpro150/bin "
+                # && \
+                #pip install -r google-research/policy_eval/requirements.txt && \
+                #pip install 'protobuf<3.21pyt.0'"
+RUN /bin/bash -c "source /envs/eval/bin/activate && \
+                export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mjpro150/bin && \
+                pip install -r google-research/policy_eval/requirements.txt && \
+                pip install 'protobuf<3.21pyt.0' &&\
+                pip install numpy==1.22 &&\
+                pip install gym==0.23 &&\
+                pip install tensorflow-probability==0.19.0"
+# install jupyter notebook into both envs
+RUN /bin/bash -c "source /envs/eval/bin/activate && \
+                pip install jupyter && \
+                pip install ipykernel && \
+                pip install matplotlib && \
+                python -m ipykernel install --user --name=eval"
+                
+RUN /bin/bash -c "source /envs/policies_d4rl/bin/activate && \
+                pip install jupyter && \
+                pip install ipykernel && \
+                python -m ipykernel install --user --name=policies_d4rl"
+#    export MUJOCO_PY_MUJOCO_PATH=/root/.mujoco/mujoco150 && \
+#    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/root/.mujoco/mujoco150/bin && \
+#    pip install mujoco-py==1.50.1.68"
+# install pinocchio, this can actually, probably be removed
+RUN /bin/bash -c "source /envs/eval/bin/activate && \
+                apt install -qqy lsb-release gnupg2 curl && \
+                echo 'deb [trusted=yes arch=amd64] http://robotpkg.openrobots.org/packages/debian/pub $(lsb_release -cs) robotpkg' | tee /etc/apt/sources.list.d/robotpkg.list && \
+                curl http://robotpkg.openrobots.org/packages/debian/robotpkg.key | apt-key add - && \
+                apt update && \
+                apt install -qqy robotpkg-py3*-pinocchio"
+
+ENV PATH="/opt/openrobots/bin:${PATH}"
+ENV PKG_CONFIG_PATH="/opt/openrobots/lib/pkgconfig:${PKG_CONFIG_PATH}"
+ENV LD_LIBRARY_PATH="/opt/openrobots/lib:${LD_LIBRARY_PATH}"
+ENV PYTHONPATH="/opt/openrobots/lib/python3.8/site-packages:${PYTHONPATH}"
+ENV CMAKE_PREFIX_PATH="/opt/openrobots:${CMAKE_PREFIX_PATH}"
+
+# clone trifinger
+RUN git clone https://github.com/rr-learning/trifinger_rl_datasets.git
+RUN git clone https://github.com/rr-learning/trifinger-rl-example.git
+
+RUN /bin/bash -c "source /envs/eval/bin/activate && \
+                pip install --upgrade pip &&\
+                pip install torch==1.9.1+cu111 -f https://download.pytorch.org/whl/torch_stable.html && \    
+                pip install -e trifinger_rl_datasets/ && \
+                pip install -e trifinger-rl-example/ && \
+                pip install numpy==1.23"
