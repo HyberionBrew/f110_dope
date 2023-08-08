@@ -1,0 +1,2 @@
+# !/bin/bash
+docker run --gpus all -it --rm -p 8888:8888 -v /mnt/hdd2/fabian/f1tenth_dope/ws_ope:/app/ws -v /mnt/hdd2/fabian/f1tenth/f1tenth_orl_datasets/collect_dataset/trajectories.zarr:/app/ws/trajectories.zarr f110_dope

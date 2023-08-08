@@ -1,0 +1,9 @@
+[submodule "ws_ope/policy_eval"]
+	path = ws_ope/policy_eval
+	url = https://github.com/HyberionBrew/policy_eval.git
+[submodule "ws_ope/f1tenth_orl_dataset"]
+	path = ws_ope/f1tenth_orl_dataset
+	url = https://github.com/HyberionBrew/f1tenth_orl_dataset.git
+[submodule "ws_ope/ftg_agents"]
+	path = ws_ope/ftg_agents
+	url = https://github.com/HyberionBrew/stochastic_ftg_agents.git
