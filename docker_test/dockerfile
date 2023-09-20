@@ -1,0 +1,62 @@
+FROM pytorch/pytorch:1.13.0-cuda11.6-cudnn8-runtime
+
+# Set up Python 3.8
+ENV DEBIAN_FRONTEND=noninteractive
+
+
+RUN apt-get update --fix-missing && \
+    apt-get install -y \
+                    python3-dev \
+                    python3-pip \
+                    git \
+                    build-essential \
+                    libgl1-mesa-dev \
+                    mesa-utils \
+                    libglu1-mesa-dev \
+                    fontconfig \
+                    libfreetype6-dev
+RUN apt-get install curl -y
+RUN curl https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o Miniconda3-latest-Linux-x86_64.sh
+RUN bash Miniconda3-latest-Linux-x86_64.sh -b
+
+RUN conda create --name tf python=3.9
+RUN conda init bash && \
+    echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
+    . /opt/conda/etc/profile.d/conda.sh && \
+    conda activate tf && \
+    conda install -c conda-forge cudatoolkit=11.8.0 &&\
+    pip install nvidia-cudnn-cu11==8.6.0.163
+
+RUN mkdir -p $CONDA_PREFIX/etc/conda/activate.d && \
+    echo 'CUDNN_PATH=$(dirname $(python -c "import nvidia.cudnn;print(nvidia.cudnn.__file__)"))' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh && \
+    echo 'export LD_LIBRARY_PATH=$CUDNN_PATH/lib:$CONDA_PREFIX/lib/:$LD_LIBRARY_PATH' >> $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
+
+RUN /bin/bash -c "source activate tf && \
+    pip install tensorflow==2.12.0 && \
+    pip install gymnasium==0.28 && \
+    pip install stable-baselines3[extra]==2.0"
+
+
+RUN /bin/bash -c "source activate tf && \
+    git clone https://github.com/f1tenth/f1tenth_gym.git && \
+    cd f1tenth_gym && \
+    git checkout v1.0.0 && \
+    pip install -e ."
+
+RUN git clone https://github.com/HyberionBrew/policy_eval.git
+RUN /bin/bash -c "source activate tf && \
+    cd policy_eval && \
+    git checkout f110 && \
+    pip install -r requirements.txt"
+# need pillow 2.
+RUN /bin/bash -c "source activate tf && \
+    pip install --upgrade Pillow && \
+    pip install pandas==1.4 "
+
+RUN echo "source /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
+    echo "conda activate tf" >> ~/.bashrc && \
+    echo 'CUDNN_PATH=$(dirname $(python -c "import nvidia.cudnn;print(nvidia.cudnn.__file__)"))' >> ~/.bashrc && \
+    echo 'export LD_LIBRARY_PATH=$CUDNN_PATH/lib:$CONDA_PREFIX/lib/:$LD_LIBRARY_PATH' >> ~/.bashrc
+
+COPY entrypoint.sh /entrypoint.sh
+CMD ["/entrypoint.sh"]

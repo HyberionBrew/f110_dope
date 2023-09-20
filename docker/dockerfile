@@ -1,12 +1,8 @@
-FROM ubuntu:20.04
+FROM nvidia/cuda:11.1.1-cudnn8-devel-ubuntu20.04
 
-ARG DEBIAN_FRONTEND="noninteractive"
-ENV LIBGL_ALWAYS_INDIRECT=1
-ENV NVIDIA_VISIBLE_DEVICES \
-    ${NVIDIA_VISIBLE_DEVICES:-all}
+# Set up Python 3.8
+ENV DEBIAN_FRONTEND=noninteractive
 
-ENV NVIDIA_DRIVER_CAPABILITIES \
-    ${NVIDIA_DRIVER_CAPABILITIES:+$NVIDIA_DRIVER_CAPABILITIES,}graphics
 
 RUN apt-get update --fix-missing && \
     apt-get install -y \
@@ -25,15 +21,26 @@ RUN pip3 install PyOpenGL \
                  PyOpenGL_accelerate
 
 RUN git clone https://github.com/f1tenth/f1tenth_gym.git
+# checkout branch v1.0.0 and install requirements
 RUN cd f1tenth_gym && \
+    git checkout v1.0.0 && \
     pip3 install -e .
+    
 RUN git clone https://github.com/HyberionBrew/policy_eval.git
+# checkout branch f110 and install requirements
+RUN pip3 install tensorflow==2.12.0
+RUN cd policy_eval && \
+    git checkout f110 && \
+    pip3 install -r requirements.txt
 RUN pip3 install numba==0.55.2
-RUN pip3 install -r policy_eval/requirements.txt
+
+#RUN pip3 install -r policy_eval/requirements.txt
 RUN pip3 install protobuf==3.20
-RUN pip3 install tensorflow==2.12
 RUN mkdir -p /app/ws
+RUN pip3 install gymnasium==0.28
 # add export PYTHONPATH=$PYTHONPATH:/app/ws
-ENTRYPOINT ["/bin/bash"] 
+
+COPY entrypoint.sh /entrypoint.sh
+CMD ["/entrypoint.sh"]
 #&& pip3 install -e ftg_agents/ && \
 #            pip3 install -e f1tenth_orl_dataset/ "]
