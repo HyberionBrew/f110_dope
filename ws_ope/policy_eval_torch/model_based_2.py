@@ -780,7 +780,8 @@ class ModelBased2(object):
                      get_target_action=None, 
                      horizon = 10,
                      batch_size = 256,
-                     use_dynamics=True):
+                     use_dynamics=True,
+                     skip_first_action=False):
         
         assert (len(states.shape) == 3) # (batch, timestep, state_dim)
         assert (len(actions.shape) == 3) # (batch, timestep, action_dim)
@@ -819,7 +820,7 @@ class ModelBased2(object):
                         assert(action.shape[0] == state_batch.shape[0])
                         assert(action.shape[1]==2)
                     else:
-                        if i == 0: #TODO! this is missing in the dataset!
+                        if i == 0 and not skip_first_action: #TODO! this is missing in the dataset!
                             action = np.zeros((state_batch.shape[0],2),dtype=np.float32)
                             # action to torch
                             action = torch.tensor(action).to(self.device)

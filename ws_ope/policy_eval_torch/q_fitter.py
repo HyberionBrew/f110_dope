@@ -54,6 +54,12 @@ class QFitter(nn.Module):
         self.optimizer_iterations = 0
         self.writer = writer
 
+    # write device attibute
+    def to(self, device):
+        self.critic.to(device)
+        self.critic_target.to(device)
+        return self
+
     def soft_update(self, local_model, target_model, tau=0.005):
         """Soft update model parameters."""
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
@@ -125,20 +131,57 @@ class QFitter(nn.Module):
             self.writer.add_scalar('train/fqe/loss', critic_loss.item(), global_step=self.optimizer_iterations)
         self.optimizer_iterations += 1
         return critic_loss.item()
-    
-    def estimate_returns(self, initial_states, initial_weights, get_action):
-        """Estimate returns with fitted q learning."""
+    """
+    def estimate_returns(self, initial_states, initial_weights, get_action, action=None, timesteps=None):
+        # Estimate returns with fitted q learning.
         with torch.no_grad():
-            initial_actions = get_action(initial_states)
-            preds = self(initial_states, initial_actions)
-            #print("preds", preds.shape)
-            #print("initial_weights", initial_weights.shape)
-
+            if action is not None:
+                print("action not none")
+                initial_actions = action
+            else:
+                initial_actions = get_action(initial_states)
+            if timesteps is not None:
+                print("timesteps not none")
+                preds = self(initial_states, initial_actions, timesteps=timesteps)
+            else:
+                print("yo")
+                print(initial_states.shape)
+                print(initial_actions.shape)
+                preds = self(initial_states, initial_actions)
+            print("preds", preds.shape)
+            print(preds)
+            print(initial_weights)
+            print("initial_weights", initial_weights.shape)
+            print("inital_weights", torch.sum(initial_weights))
+            print(torch.sum(preds * initial_weights))
             weighted_mean = torch.sum(preds * initial_weights) / torch.sum(initial_weights)
+            print("weighted", weighted_mean)
             weighted_variance = torch.sum(initial_weights * (preds - weighted_mean) ** 2) / torch.sum(initial_weights)
             weighted_stddev = torch.sqrt(weighted_variance)
         return weighted_mean, weighted_stddev
-        
+    """
+
+    def estimate_returns(self, initial_states, initial_weights, get_action, action=None, timesteps=None, reduction=True):
+        """Estimate returns with fitted q learning."""
+        with torch.no_grad():
+            weighted_stddev = 0.0
+            if action is not None:
+                initial_actions = action
+            else:
+                initial_actions = get_action(initial_states)
+            if timesteps is not None:
+                preds = self(initial_states, initial_actions, timesteps=timesteps)
+            else:
+
+                preds = self(initial_states, initial_actions)
+            if reduction==False:
+                weighted_mean = preds
+            else:
+                weighted_mean = torch.sum(preds * initial_weights) / torch.sum(initial_weights)
+                weighted_variance = torch.sum(initial_weights * (preds - weighted_mean) ** 2) / torch.sum(initial_weights)
+                weighted_stddev = torch.sqrt(weighted_variance)
+        return weighted_mean, weighted_stddev
+
     def estimate_returns_unweighted(self, initial_states, get_action):
         """Estimate returns unweighted."""
         with torch.no_grad():

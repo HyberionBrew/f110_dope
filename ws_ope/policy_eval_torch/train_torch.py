@@ -55,7 +55,7 @@ import sys
 import torch
 
 from policy_eval_torch.dataset import F110Dataset
-
+from policy_eval_torch.q_model import FQEMB
 
 EPS = np.finfo(np.float32).eps
 FLAGS = flags.FLAGS
@@ -145,6 +145,7 @@ def main(_):
   
 
   np.random.seed(FLAGS.seed)
+  torch.manual_seed(FLAGS.seed)
   # assert not FLAGS.d4rl and FlAGS.trifinger
   
   import datetime
@@ -261,7 +262,7 @@ def main(_):
                   fn_unnormalize=behavior_dataset.unnormalize_states,
                   learning_rate=FLAGS.lr,
                   weight_decay=FLAGS.weight_decay,
-                  target_reward="trajectories_raceline.zarr")
+                  target_reward=FLAGS.path)
     model_mb.load("/home/fabian/msc/f110_dope/ws_ope/logdir/mb/mb_model_110000", "new_model")
 
     model_fqe = QFitter(behavior_dataset.states.shape[1],#env.observation_spec().shape[0],
@@ -276,8 +277,9 @@ def main(_):
                    i=60000)
 
     model = FQEMB(model_fqe, model_mb, FLAGS.discount, 
+                  behavior_dataset.timestep_constant,
                   mb_steps=20,
-                  single_step_fqe = True,
+                  single_step_fqe = False,
                   min_reward=min_reward, max_reward=max_reward,
                   writer=writer,
                   )
@@ -466,6 +468,7 @@ def main(_):
                             get_target_actions)
         #print("Raw predicted returns", pred_returns)
         pred_returns = behavior_dataset.unnormalize_rewards(pred_returns)
+        print(std)
         std = behavior_dataset.unnormalize_rewards(std)
         pred_returns *= (1-FLAGS.discount)
         std *= (1-FLAGS.discount)
@@ -478,8 +481,23 @@ def main(_):
                                   get_action=get_target_actions,)
           print(f"eval ds {eval_agents[j]}: {eval_ds}")
         """
-        model.save(save_path, i=i)
-        print("saved as", save_path, i)
+        model.save(save_path, i=0)
+        print("saved as", save_path, 0)
+      if FLAGS.algo == "fqe+mb":
+        print("Running fqe mb")
+        pred_returns, std = model.estimate_returns(behavior_dataset.initial_states,
+                                behavior_dataset.initial_weights,
+                            get_target_actions)
+        # print raw, normalized and then discount
+        print("Raw predicted returns", pred_returns)
+        pred_returns = behavior_dataset.unnormalize_rewards(pred_returns)
+        std = behavior_dataset.unnormalize_rewards(std)
+        pred_returns *= (1-FLAGS.discount)
+        std *= (1-FLAGS.discount)
+        print("normed,", pred_returns)
+        exit()
+
+
       writer.add_scalar(f"eval/mean_{FLAGS.algo}", pred_returns, global_step=i)
       writer.add_scalar(f"eval/std_{FLAGS.algo}", std, global_step=i)
       print(pred_returns)

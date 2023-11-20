@@ -103,7 +103,6 @@ class F110Dataset(Dataset):
             self.reward_std = torch.std(self.rewards)
             self.rewards = self.normalize_rewards(self.rewards) 
         else:
-            print("am i a joke?")
             self.reward_mean = 0.0
             self.reward_std = 1.0
     def normalize_states(self, states):

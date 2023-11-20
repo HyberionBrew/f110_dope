@@ -68,7 +68,7 @@ flags.DEFINE_float('speed', 1.0, 'Mean speed of the car, for the agent')
 flags.DEFINE_bool('load_mb_model', False, 'Whether to load a model-based model.')
 flags.DEFINE_integer('seed', 1, 'Fixed random seed for training.')
 flags.DEFINE_float('lr', 3e-5, 'Critic learning rate.')
-flags.DEFINE_float('weight_decay', 1e-5, 'Weight decay.')
+flags.DEFINE_float('weight_decay', 1e-7, 'Weight decay.') # 1e-5
 flags.DEFINE_float('behavior_policy_std', None,
                    'Noise scale of behavior policy.')
 flags.DEFINE_float('target_policy_std', 0.0, 'Noise scale of target policy.')
