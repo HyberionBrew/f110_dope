@@ -54,6 +54,7 @@ class F110Dataset(Dataset):
         # now we need to do next states and next scans
         # first check where timeout and where terminal
         finished = np.logical_or(d4rl_dataset['terminals'], d4rl_dataset['timeouts'])
+        self.finished = finished
         # rolled finished to the right by 1
         finished = torch.from_numpy(finished)
         self.mask_inital = torch.roll(finished, 1)
@@ -105,6 +106,7 @@ class F110Dataset(Dataset):
         else:
             self.reward_mean = 0.0
             self.reward_std = 1.0
+            
     def normalize_states(self, states):
         # only normalize columns [0,1,4,5,6,7,8]
         states_return = states.clone()

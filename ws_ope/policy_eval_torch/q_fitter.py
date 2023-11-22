@@ -83,6 +83,7 @@ class QFitter(nn.Module):
 
         final_result = torch.cat(results, dim=0)
         return final_result
+    
     def update(self, states, actions, next_states, next_actions, rewards, masks, weights, discount, min_reward, max_reward, timesteps=None):
         """Updates critic parameters."""
 

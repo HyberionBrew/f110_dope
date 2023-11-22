@@ -21,6 +21,7 @@ from absl import logging
 from stable_baselines3 import PPO # this needs to be imported before tensorflow
 from policy_eval_torch.model_based_2 import ModelBased2
 from policy_eval_torch.q_fitter import QFitter
+from policy_eval_torch.doubly_robust import DR_estimator
 
 import gc
 import json
@@ -101,6 +102,7 @@ flags.DEFINE_bool('alternate_reward', False, 'Whether to use alternate reward')
 flags.DEFINE_string('path', "trajectories.zarr", "The reward dataset to use")
 flags.DEFINE_bool('use_torch', False, 'Whether to use torch (which is the new model)')
 flags.DEFINE_integer('clip_trajectory_max', 0, 'Max trajectory length')
+flags.DEFINE_bool('dr', False, 'Whether to use doubly robust')
 
 def make_hparam_string(json_parameters=None, **hparam_str_dict):
   if json_parameters:
@@ -116,12 +118,16 @@ def get_infinite_iterator(dataloader):
     while True:
         for data in dataloader:
             yield data
+
 def create_save_dir(experiment_directory):
     save_directory = os.path.join(FLAGS.save_dir, experiment_directory)
     if not os.path.exists(save_directory):
       os.makedirs(save_directory)
     # now the algo directory
-    save_directory = os.path.join(save_directory, f"{FLAGS.algo}")
+    if not FLAGS.dr:
+      save_directory = os.path.join(save_directory, f"{FLAGS.algo}")
+    else:
+      save_directory = os.path.join(save_directory, f"{FLAGS.algo}_dr")
     if not os.path.exists(save_directory):
       os.makedirs(save_directory)
     # path
@@ -141,7 +147,7 @@ def create_save_dir(experiment_directory):
 
 def main(_):
   
-  save_path = create_save_dir("2011")
+  save_path = create_save_dir("test")
   
 
   np.random.seed(FLAGS.seed)
@@ -226,73 +232,6 @@ def main(_):
   max_reward = behavior_dataset.rewards.max()
   print(min_reward)
   print(max_reward)
-
-  if FLAGS.algo == "mb":
-    model = ModelBased2(behavior_dataset.states.shape[1],
-                      env.action_spec().shape[1], [256,256,256,256], 
-                      dt=1/20, 
-                      min_state=min_state, 
-                      max_state=max_state, 
-                      logger=writer, 
-                      dataset=behavior_dataset,
-                      fn_normalize=behavior_dataset.normalize_states,
-                      fn_unnormalize=behavior_dataset.unnormalize_states,
-                      learning_rate=FLAGS.lr,
-                      weight_decay=FLAGS.weight_decay,
-                      target_reward="trajectories_raceline.zarr")
-  if FLAGS.algo == "fqe":
-    model = QFitter(behavior_dataset.states.shape[1],#env.observation_spec().shape[0],
-                    env.action_spec().shape[1], FLAGS.lr, FLAGS.weight_decay,
-                    FLAGS.tau, 
-                    use_time=True, 
-                    timestep_constant = behavior_dataset.timestep_constant,
-                    writer=writer)
-    #print(behavior_dataset.timestep_constant)
-    #print(behavior_dataset.timesteps[0:20])
-    #exit()
-  if FLAGS.algo == "fqe+mb":
-    model_mb = ModelBased2(behavior_dataset.states.shape[1],
-                  env.action_spec().shape[1], [256,256,256,256], 
-                  dt=1/20, 
-                  min_state=min_state, 
-                  max_state=max_state, 
-                  logger=writer, 
-                  dataset=behavior_dataset,
-                  fn_normalize=behavior_dataset.normalize_states,
-                  fn_unnormalize=behavior_dataset.unnormalize_states,
-                  learning_rate=FLAGS.lr,
-                  weight_decay=FLAGS.weight_decay,
-                  target_reward=FLAGS.path)
-    model_mb.load("/home/fabian/msc/f110_dope/ws_ope/logdir/mb/mb_model_110000", "new_model")
-
-    model_fqe = QFitter(behavior_dataset.states.shape[1],#env.observation_spec().shape[0],
-                env.action_spec().shape[1], FLAGS.lr, FLAGS.weight_decay,
-                FLAGS.tau, 
-                use_time=True, 
-                timestep_constant = behavior_dataset.timestep_constant,
-                writer=writer)
-    fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/2011/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{FLAGS.target_policy}"
-    print("Loading from ", fqe_load)
-    model_fqe.load(fqe_load,
-                   i=60000)
-
-    model = FQEMB(model_fqe, model_mb, FLAGS.discount, 
-                  behavior_dataset.timestep_constant,
-                  mb_steps=20,
-                  single_step_fqe = False,
-                  min_reward=min_reward, max_reward=max_reward,
-                  writer=writer,
-                  )
-  #else:
-  #  raise ValueError(f"Unknown algo {FLAGS.algo}")
-
-  if FLAGS.load_mb_model:
-    model.load("/home/fabian/msc/f110_dope/ws_ope/logdir/mb/mb_model_110000", "new_model")
-
-
-  #print(min_state)
-  #print(max_state)
-
   actor = F110Actor(FLAGS.target_policy, deterministic=False) #F110Stupid()
   model_input_normalizer = Normalize()
 
@@ -329,7 +268,6 @@ def main(_):
       model_input_dict['lidar_occupancy'] = laser_scan
       #print("model input dict")
       #print(model_input_dict)
-      #print(model_input_dict)
       batch_actions = actor(
         model_input_dict,
         std=FLAGS.target_policy_std)[1]
@@ -344,6 +282,131 @@ def main(_):
     # print(actions)
     return actions
 
+  def get_target_logprobs(states,actions,scans=None, batch_size=5000):
+    num_batches = int(np.ceil(len(states) / batch_size))
+    log_probs_list = []
+    for i in range(num_batches):
+      # print(i)
+      # Calculate start and end indices for the current batch
+      start_idx = i * batch_size
+      end_idx = min((i + 1) * batch_size, len(states))
+      # Extract the current batch of states
+      batch_states = states[start_idx:end_idx]
+      batch_states_unnorm = behavior_dataset.unnormalize_states(batch_states)
+      
+      # Extract the current batch of actions
+      batch_actions = actions[start_idx:end_idx]
+
+      # get scans
+      if scans is not None:
+        laser_scan = scans[start_idx:end_idx]
+      else:
+        laser_scan = F110Env.get_laser_scan(batch_states_unnorm, subsample_laser) # TODO! rename f110env to dataset_env
+        laser_scan = model_input_normalizer.normalize_laser_scan(laser_scan)
+
+      # back to dict
+      model_input_dict = model_input_normalizer.unflatten_batch(batch_states_unnorm)
+      # normalize back to model input
+      model_input_dict = model_input_normalizer.normalize_obs_batch(model_input_dict)
+      # now also append the laser scan
+      model_input_dict['lidar_occupancy'] = laser_scan
+
+      # Compute log_probs for the current batch
+      batch_log_probs = actor(
+          model_input_dict,
+          actions=batch_actions,
+          std=FLAGS.target_policy_std)[2]
+      
+      # Sum along the last axis if the rank is greater than 1
+      # print("len logprobs", print(batch_log_probs.shape))
+      
+      # Collect the batch_log_probs
+      log_probs_list.append(batch_log_probs)
+    # Concatenate the collected log_probs from all batches
+    log_probs = [torch.from_numpy(log_prob) for log_prob in log_probs_list]
+    log_probs = torch.concat(log_probs, axis=0)
+    return log_probs
+
+  if FLAGS.algo == "mb":
+    model = ModelBased2(behavior_dataset.states.shape[1],
+                      env.action_spec().shape[1], [256,256,256,256], 
+                      dt=1/20, 
+                      min_state=min_state, 
+                      max_state=max_state, 
+                      logger=writer, 
+                      dataset=behavior_dataset,
+                      fn_normalize=behavior_dataset.normalize_states,
+                      fn_unnormalize=behavior_dataset.unnormalize_states,
+                      learning_rate=FLAGS.lr,
+                      weight_decay=FLAGS.weight_decay,
+                      target_reward="trajectories_raceline.zarr")
+  if FLAGS.algo == "fqe":
+    model = QFitter(behavior_dataset.states.shape[1],#env.observation_spec().shape[0],
+                    env.action_spec().shape[1], FLAGS.lr, FLAGS.weight_decay,
+                    FLAGS.tau, 
+                    use_time=True, 
+                    timestep_constant = behavior_dataset.timestep_constant,
+                    writer=writer)
+    
+    if True:
+      fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/2011/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{FLAGS.target_policy}"
+      print("Loading from ", fqe_load)
+      model.load(fqe_load,
+                    i=0)
+    #print(behavior_dataset.timestep_constant)
+    #print(behavior_dataset.timesteps[0:20])
+    #exit()
+  if FLAGS.algo == "fqe_mb":
+    model_mb = ModelBased2(behavior_dataset.states.shape[1],
+                  env.action_spec().shape[1], [256,256,256,256], 
+                  dt=1/20,
+                  min_state=min_state, 
+                  max_state=max_state, 
+                  logger=writer, 
+                  dataset=behavior_dataset,
+                  fn_normalize=behavior_dataset.normalize_states,
+                  fn_unnormalize=behavior_dataset.unnormalize_states,
+                  learning_rate=FLAGS.lr,
+                  weight_decay=FLAGS.weight_decay,
+                  target_reward=FLAGS.path)
+    model_mb.load("/home/fabian/msc/f110_dope/ws_ope/logdir/mb/mb_model_110000", "new_model")
+
+    model_fqe = QFitter(behavior_dataset.states.shape[1],#env.observation_spec().shape[0],
+                env.action_spec().shape[1], FLAGS.lr, FLAGS.weight_decay,
+                FLAGS.tau, 
+                use_time=True, 
+                timestep_constant = behavior_dataset.timestep_constant,
+                writer=writer)
+    fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/2011/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{FLAGS.target_policy}"
+    print("Loading from ", fqe_load)
+    model_fqe.load(fqe_load,
+                   i=0)
+
+    model = FQEMB(model_fqe, model_mb, FLAGS.discount, 
+                  behavior_dataset.timestep_constant,
+                  rollouts=5,
+                  mb_steps=10,
+                  single_step_fqe = False,
+                  min_reward=min_reward, max_reward=max_reward,
+                  writer=writer,
+                  target_actions = get_target_actions,
+                  )
+  if FLAGS.dr:
+    print("enabled dr")
+    dr_model = DR_estimator(model, behavior_dataset, FLAGS.discount)
+
+  #else:
+  #  raise ValueError(f"Unknown algo {FLAGS.algo}")
+
+  if FLAGS.load_mb_model and FLAGS.algo =="mb":
+    model.load("/home/fabian/msc/f110_dope/ws_ope/logdir/mb/mb_model_110000", "new_model")
+
+
+  #print(min_state)
+  #print(max_state)
+
+  
+
 
   #@tf.function
   def update_step():
@@ -351,7 +414,11 @@ def main(_):
 
     (states, scans, actions, next_states, next_scans, rewards, masks, weights,
      log_prob, timesteps) = next(data_iter)
-    if FLAGS.algo == "mb":
+    if FLAGS.dr:
+      # already trained
+      pass
+
+    elif FLAGS.algo == "mb":
       model.update(states, actions, next_states, rewards, masks,
                     weights)
     elif FLAGS.algo == "fqe":
@@ -404,7 +471,7 @@ def main(_):
                     max_reward= max_r, 
                     timesteps=timesteps)
       #exit()
-    elif FLAGS.algo == "fqe+mb":
+    elif FLAGS.algo == "fqe_mb":
       # in this case we are using already trained models!
       # so there is no updating involved
       pass 
@@ -421,6 +488,16 @@ def main(_):
       update_step()
 
     if i % FLAGS.eval_interval == 0:
+      if FLAGS.dr:
+        print("Starting DR")
+        pred_return, pred_std = dr_model.estimate_returns(get_target_actions, get_target_logprobs)
+        pred_returns = behavior_dataset.unnormalize_rewards(pred_return)
+        std = behavior_dataset.unnormalize_rewards(pred_std)
+        pred_returns *= (1-FLAGS.discount)
+        std *= (1-FLAGS.discount)
+        print("pred returns", pred_returns)
+        print("std", std)
+        print("############# DR finished ##############")
       if FLAGS.algo == "mb":
         horizon = 500
         print("Starting evaluation")
@@ -483,7 +560,7 @@ def main(_):
         """
         model.save(save_path, i=0)
         print("saved as", save_path, 0)
-      if FLAGS.algo == "fqe+mb":
+      if FLAGS.algo == "fqe_mb":
         print("Running fqe mb")
         pred_returns, std = model.estimate_returns(behavior_dataset.initial_states,
                                 behavior_dataset.initial_weights,
@@ -494,8 +571,8 @@ def main(_):
         std = behavior_dataset.unnormalize_rewards(std)
         pred_returns *= (1-FLAGS.discount)
         std *= (1-FLAGS.discount)
-        print("normed,", pred_returns)
-        exit()
+        #print("normed,", pred_returns)
+        #exit()
 
 
       writer.add_scalar(f"eval/mean_{FLAGS.algo}", pred_returns, global_step=i)
