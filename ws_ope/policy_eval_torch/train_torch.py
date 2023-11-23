@@ -384,9 +384,10 @@ def main(_):
 
     model = FQEMB(model_fqe, model_mb, FLAGS.discount, 
                   behavior_dataset.timestep_constant,
-                  rollouts=5,
-                  mb_steps=10,
-                  single_step_fqe = False,
+                  max_timestep=behavior_dataset.timesteps.max(),
+                  rollouts=1,
+                  mb_steps=5,
+                  single_step_fqe = True,
                   min_reward=min_reward, max_reward=max_reward,
                   writer=writer,
                   target_actions = get_target_actions,

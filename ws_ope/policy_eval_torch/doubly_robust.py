@@ -26,17 +26,12 @@ class DR_estimator:
             offset, std_deviation = self.model.estimate_returns(self.behavior_dataset.initial_states,
                                                             self.behavior_dataset.initial_weights,
                                                             get_action=get_target_actions,)
-            q_values = self.model(self.behavior_dataset.states,
-                            self.behavior_dataset.actions,
-                            timesteps = self.behavior_dataset.timesteps)
-            #print(self.behavior_dataset.states[0])
-            #print(self.behavior_dataset.actions[0])
-            #print(self.behavior_dataset.timesteps[0])
-            #print(q_values)
-            #print(q_values.shape)
-            #x = self.behavior_dataset.unnormalize_rewards(q_values[0])
-            #print(x)
-            #exit()
+            if False:
+                q_values = self.model(self.behavior_dataset.states,
+                                self.behavior_dataset.actions,
+                                timesteps = self.behavior_dataset.timesteps)
+            else:
+                q_values = self.model.compute_q_values(self.behavior_dataset)
             n_samples = 10
             next_actions = [get_target_actions(self.behavior_dataset.states_next, 
                                             scans=self.behavior_dataset.scans_next)
@@ -47,16 +42,6 @@ class DR_estimator:
                                         #scans = behavior_dataset.next_scans,
                                         timesteps = self.behavior_dataset.timesteps + self.behavior_dataset.timestep_constant)
                             for i in range(n_samples)] # / n_samples
-            # got the next q values
-            #average the next_q_values
-            #print(self.behavior_dataset.states_next)
-            #print(next_q_values)
-            #print(len(next_q_values))
-            #print(next_q_values[0].shape)
-            #x = self.behavior_dataset.unnormalize_rewards(next_q_values[0])
-            #print("unnormed", x)
-            #print(q_values.shape)
-            
             next_q_values = torch.stack(next_q_values, dim=0).mean(dim=0)
 
             rewards = self.behavior_dataset.rewards
@@ -92,33 +77,28 @@ class DR_estimator:
                     target_log_probs[traj_start:traj_end])
             
             assert np.sum(batched_masks) == len(rewards)
-            print(batched_masks)
             # discounted weights
             batched_weights = (batched_masks *
                             (self.discount **
                                 np.arange(max_trajectory_length))[None, :])
-            
-            print("before clipping", np.mean(batched_log_probs), 
-                np.max(batched_log_probs), np.min(batched_log_probs))
+
             clipped_log_probs = np.clip(batched_log_probs, -6., 2.)
             # how much is clipped here?
-            print(np.mean(batched_log_probs), np.max(batched_log_probs), 
-                np.min(batched_log_probs))
 
+            import matplotlib.pyplot as plt
             cum_log_probs = batched_masks * np.cumsum(clipped_log_probs, axis=1)
+
             cum_log_prob_offset = np.max(cum_log_probs, axis=0)
             cum_probs = np.exp(cum_log_probs- cum_log_prob_offset[None,:])
-            print(cum_probs)
+
             avg_cum_probs = (
                 np.sum(cum_probs * trajectory_weights[:, None], axis=0) /
-                (1e-10 + np.sum(batched_masks * trajectory_weights[:, None],
-                                axis=0)))
+                ( np.sum(batched_masks * trajectory_weights[:, None],
+                                axis=0)+1e-10)) # 
             norm_cum_probs = cum_probs / (1e-10 + avg_cum_probs[None, :])
-            print(norm_cum_probs)
+
             #average the cum probs along dim=1 and plot
-            import matplotlib.pyplot as plt
-            plt.plot(np.mean(norm_cum_probs, axis=0))
-            plt.show()
+
             weighted_rewards = batched_weights * batched_rewards * norm_cum_probs
             trajectory_values = np.sum(weighted_rewards, axis=1)
             mean_trajectory_value = np.sum(trajectory_values * trajectory_weights) / (
