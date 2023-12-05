@@ -25,8 +25,10 @@ class F110Dataset(Dataset):
                reward_std = None,
                include_timesteps_in_obs = False,
                only_terminals=False,
-               clip_trajectory_length= None,):
+               clip_trajectory_length= None,
+               sample_from_trajectories= 0):
         # Load the dataset
+
         d4rl_dataset = d4rl_env.get_dataset(
             zarr_path=path, 
             without_agents=exclude_agents, 
@@ -34,7 +36,8 @@ class F110Dataset(Dataset):
             alternate_reward=alternate_reward,
             include_timesteps_in_obs=include_timesteps_in_obs,
             only_terminals=only_terminals,
-            clip_trajectory_length=clip_trajectory_length
+            clip_trajectory_length=clip_trajectory_length,
+            sample_from_trajectories=sample_from_trajectories,
         )
         # Assuming 'observations' and 'next_observations' are keys in the dataset
         #self.observations = self.data['observations']
@@ -64,6 +67,7 @@ class F110Dataset(Dataset):
         start = 0
         self.states_next = torch.zeros_like(self.states)
         self.scans_next = torch.zeros_like(self.scans)
+        self.rewards_next = torch.zeros_like(self.rewards)
         # zeros like (len(finished_indices), obs_shape)
         self.initial_states = torch.zeros((len(finished_indices), self.states.shape[-1]))
         # unused inital_weights
@@ -72,10 +76,10 @@ class F110Dataset(Dataset):
             # append to dim 0
             next_states = torch.cat((self.states[start+1:stop+1], self.states[stop].unsqueeze(0)), dim=0)
             next_scans = torch.cat((self.scans[start+1:stop+1], self.scans[stop].unsqueeze(0)), dim=0)
-
+            next_rewards = torch.cat((self.rewards[start+1:stop+1], torch.zeros_like(self.rewards[stop].unsqueeze(0))), dim=0)
             self.states_next[start:stop+1] = next_states
             self.scans_next[start:stop+1] = next_scans
-            
+            self.rewards_next[start:stop+1] = next_rewards
             self.initial_states[i] = self.states[start]
             start = stop + 1
         print("initial states", self.initial_states.shape)
@@ -102,11 +106,12 @@ class F110Dataset(Dataset):
 
             self.reward_mean = torch.mean(self.rewards)
             self.reward_std = torch.std(self.rewards)
-            self.rewards = self.normalize_rewards(self.rewards) 
+            self.rewards = self.normalize_rewards(self.rewards)
+            self.rewards_next = self.normalize_rewards(self.rewards_next)
         else:
             self.reward_mean = 0.0
             self.reward_std = 1.0
-            
+
     def normalize_states(self, states):
         # only normalize columns [0,1,4,5,6,7,8]
         states_return = states.clone()

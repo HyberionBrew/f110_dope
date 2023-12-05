@@ -28,16 +28,41 @@ class FQEMB:
         # FQE model and MB model should already be trained
         # they are just loaded in before handing to FQEMB
         pass
+
+    def compute_next_q_values(self,behavior_dataset):
+        next_states = behavior_dataset.states_next
+        timesteps = behavior_dataset.timesteps + self.timestep_constant
+        next_actions = self.target_actions(next_states, scans=behavior_dataset.scans_next)
+        next_states = next_states.unsqueeze(1).to(self.device)
+        next_actions = next_actions.unsqueeze(1).to(self.device)
+        # need to use this to overwritte in td_progr
+        rewards = behavior_dataset.rewards
+
+        all_states, all_actions = self.model_mb.fast_rollout(next_states,
+                                        next_actions,
+                                        get_target_action=None,
+                                        skip_first_action=True,
+                                        horizon=self.mb_steps) # fixes first action being 0,0
+
+
+
     # TODO make this work for next_q_values as well, what is missing to make this work?
     # just needs some index shifting and stuff like that!
-    def compute_q_values(self,behavior_dataset, next_states=False):
-        states = behavior_dataset.states
-        actions = behavior_dataset.actions
-        timesteps = behavior_dataset.timesteps#[:100]
-        rewards = behavior_dataset.rewards
+    def compute_q_values(self,behavior_dataset, next_q_values=False):
+        if next_q_values:
+            states = behavior_dataset.states_next
+            actions = self.target_actions(states, scans=behavior_dataset.scans_next)
+            timesteps = behavior_dataset.timesteps + self.timestep_constant
+            rewards = behavior_dataset.rewards_next
+        else:
+            states = behavior_dataset.states
+            actions = behavior_dataset.actions
+            timesteps = behavior_dataset.timesteps#[:100]
+            rewards = behavior_dataset.rewards
 
         states = states#[:100]
         actions = actions#[:100]
+        timesteps = timesteps#[:100]
         states = states.unsqueeze(1).to(self.device)
         actions = actions.unsqueeze(1).to(self.device)
         rewards = rewards#[:100] # .to(self.device)
@@ -74,6 +99,7 @@ class FQEMB:
         #print(all_rewards)
          # set the 0th reward to the reward we actually already know, needed for td-progress
         all_rewards[:,0] = rewards
+
         #print(all_rewards)
         #print(behavior_dataset.rewards[0:100])
         # in the case we want to compute normal q_values we can figure out the starts easily
@@ -96,7 +122,7 @@ class FQEMB:
         if self.single_step_fqe:
             # for every final_state that is not OOB/terminal we compute the according fqe_value
             weights = torch.ones((final_states.shape[0])).to(self.device)
-            print()
+            #print()
             all_fqe_reward, _ = self.model_fqe.estimate_returns(final_states,
                                 weights,
                             get_action=None,#self.target_actions,
@@ -109,9 +135,17 @@ class FQEMB:
             all_rewards[:,-1] = all_fqe_reward.cpu().numpy()
             # zero out where it is OOB
             # zero out everything that is "outside" the trajectory
-            for i in range(self.mb_steps):
-                all_rewards[ends - i,i+1:] = 0.0
-            print(all_rewards[0:10])
+            bonus = 0
+            if next_q_values:
+                bonus = 1
+            for i in range(self.mb_steps + bonus):
+                if next_q_values:
+                    all_rewards[ends - i,i:] = 0.0
+                else:
+                    all_rewards[ends - i,i+1:] = 0.0 # could use bonus here 
+            #print(timesteps_shifted[43:53])
+            #print(all_rewards[0:10])
+            #print(all_rewards[43:53])
             # now we need to compute the correct estimates for each state with correct discounts
             # loop over all the ends
             all_rewards = torch.tensor(all_rewards).float()
@@ -141,6 +175,7 @@ class FQEMB:
             # Adjust the shape of each rewards tensor and apply the discount
             final_rewards = torch.zeros(len(all_rewards))
             # we can easily remove this loop, TODO!
+            # first compute the rollouts with discounts
             for i, rewards in enumerate(all_rewards):
                 len_rewards = len(rewards)
                 discounted_rewards = rewards * discount_matrix[i, :len_rewards]
@@ -315,6 +350,7 @@ class FQEMB:
                 gathered_rewards.append(all_rewards.mean().clone())
                 gathered_stds.append(all_rewards.std().clone())
             else:
+                # TODO! this is incorrect!
                 # Multi step FQE
                 fqe_rewards = torch.zeros_like(all_rewards)
                 for step in range(self.mb_steps):

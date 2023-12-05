@@ -8,7 +8,7 @@ class DR_estimator:
         self.behavior_dataset = behavior_dataset
         self.discount = discount
     
-    def estimate_returns(self,get_target_actions, get_target_logprobs):
+    def estimate_returns(self,get_target_actions, get_target_logprobs, algo="fqe"):
         with torch.no_grad():
             behavior_log_probs = self.behavior_dataset.log_probs
             # print the devices of the tensors
@@ -26,24 +26,37 @@ class DR_estimator:
             offset, std_deviation = self.model.estimate_returns(self.behavior_dataset.initial_states,
                                                             self.behavior_dataset.initial_weights,
                                                             get_action=get_target_actions,)
-            if False:
+            if algo=="fqe":
                 q_values = self.model(self.behavior_dataset.states,
                                 self.behavior_dataset.actions,
                                 timesteps = self.behavior_dataset.timesteps)
             else:
+                # next_q_values = self.model.compute_q_values(self.behavior_dataset, next_q_values=True)
+                print("Computing Q values")
                 q_values = self.model.compute_q_values(self.behavior_dataset)
-            n_samples = 10
-            next_actions = [get_target_actions(self.behavior_dataset.states_next, 
+            n_samples = 5
+            
+            if algo=="fqe":
+                next_actions = [get_target_actions(self.behavior_dataset.states_next, 
                                             scans=self.behavior_dataset.scans_next)
                     for _ in range(n_samples)]
-            
-            next_q_values = [self.model(self.behavior_dataset.states_next,
-                                        next_actions[i],
-                                        #scans = behavior_dataset.next_scans,
-                                        timesteps = self.behavior_dataset.timesteps + self.behavior_dataset.timestep_constant)
-                            for i in range(n_samples)] # / n_samples
-            next_q_values = torch.stack(next_q_values, dim=0).mean(dim=0)
-
+                
+                next_q_values = [self.model(self.behavior_dataset.states_next,
+                                            next_actions[i],
+                                            #scans = behavior_dataset.next_scans,
+                                            timesteps = self.behavior_dataset.timesteps + self.behavior_dataset.timestep_constant)
+                                for i in range(n_samples)] # / n_samples
+                next_q_values = torch.stack(next_q_values, dim=0).mean(dim=0)
+            else:
+                print("Computing Next Q values")
+                next_q_values = [self.model.compute_q_values(self.behavior_dataset, next_q_values=True)
+                                for i in range(n_samples)] # / n_samples
+                #print(next_q_values)
+                next_q_values = torch.stack(next_q_values, dim=0).mean(dim=0)
+                #print(next_q_values)
+                #print(next_q_values.shape)
+                #exit()
+            print("Finished Q value computation")
             rewards = self.behavior_dataset.rewards
 
             rewards = rewards + self.discount * next_q_values - q_values
@@ -106,4 +119,5 @@ class DR_estimator:
             std_trajectory_value = np.std(trajectory_values) # assumes only 1s in weights
             pred_return = offset + mean_trajectory_value
             pred_std = std_deviation + std_trajectory_value
+
             return pred_return, pred_std

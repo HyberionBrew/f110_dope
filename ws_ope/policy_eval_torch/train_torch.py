@@ -57,6 +57,7 @@ import torch
 
 from policy_eval_torch.dataset import F110Dataset
 from policy_eval_torch.q_model import FQEMB
+from policy_eval_torch.model_sim import SimBased
 
 EPS = np.finfo(np.float32).eps
 FLAGS = flags.FLAGS
@@ -103,6 +104,8 @@ flags.DEFINE_string('path', "trajectories.zarr", "The reward dataset to use")
 flags.DEFINE_bool('use_torch', False, 'Whether to use torch (which is the new model)')
 flags.DEFINE_integer('clip_trajectory_max', 0, 'Max trajectory length')
 flags.DEFINE_bool('dr', False, 'Whether to use doubly robust')
+flags.DEFINE_bool('sim_model', False, "Wheter to use the simulation enviroment as the model")
+
 
 def make_hparam_string(json_parameters=None, **hparam_str_dict):
   if json_parameters:
@@ -147,7 +150,7 @@ def create_save_dir(experiment_directory):
 
 def main(_):
   
-  save_path = create_save_dir("test")
+  save_path = create_save_dir("2311_2")
   
 
   np.random.seed(FLAGS.seed)
@@ -188,6 +191,7 @@ def main(_):
       include_timesteps_in_obs = True,
       only_terminals=True,
       clip_trajectory_length= clip_trajectory_length,
+      sample_from_trajectories= 50,
       )
   eval_datasets = []
   
@@ -216,6 +220,7 @@ def main(_):
       state_std = behavior_dataset.state_std,
       only_terminals=True,
       clip_trajectory_length= clip_trajectory_length,
+      sample_from_trajectories= 50,
       )
     eval_datasets.append(evaluation_dataset)
       
@@ -235,6 +240,9 @@ def main(_):
   actor = F110Actor(FLAGS.target_policy, deterministic=False) #F110Stupid()
   model_input_normalizer = Normalize()
 
+  """
+  @brief input shape is (batch_size, obs_dim), state needs to be normalized!!
+  """
   def get_target_actions(states, scans= None, batch_size=5000):
     num_batches = int(np.ceil(len(states) / batch_size))
     actions_list = []
@@ -267,7 +275,7 @@ def main(_):
       # now also append the laser scan
       model_input_dict['lidar_occupancy'] = laser_scan
       #print("model input dict")
-      #print(model_input_dict)
+      print(model_input_dict)
       batch_actions = actor(
         model_input_dict,
         std=FLAGS.target_policy_std)[1]
@@ -357,19 +365,28 @@ def main(_):
     #print(behavior_dataset.timesteps[0:20])
     #exit()
   if FLAGS.algo == "fqe_mb":
-    model_mb = ModelBased2(behavior_dataset.states.shape[1],
-                  env.action_spec().shape[1], [256,256,256,256], 
-                  dt=1/20,
-                  min_state=min_state, 
-                  max_state=max_state, 
-                  logger=writer, 
-                  dataset=behavior_dataset,
-                  fn_normalize=behavior_dataset.normalize_states,
-                  fn_unnormalize=behavior_dataset.unnormalize_states,
-                  learning_rate=FLAGS.lr,
-                  weight_decay=FLAGS.weight_decay,
-                  target_reward=FLAGS.path)
-    model_mb.load("/home/fabian/msc/f110_dope/ws_ope/logdir/mb/mb_model_110000", "new_model")
+    if FLAGS.sim_model:
+      model_mb = SimBased(
+                      dataset=behavior_dataset,
+                      fn_normalize=behavior_dataset.normalize_states,
+                      fn_unnormalize=behavior_dataset.unnormalize_states,
+                      normalizer = Normalize(),
+                      target_reward=FLAGS.path,
+                      map="Infsaal")
+    else:
+      model_mb = ModelBased2(behavior_dataset.states.shape[1],
+                    env.action_spec().shape[1], [256,256,256,256], 
+                    dt=1/20,
+                    min_state=min_state, 
+                    max_state=max_state, 
+                    logger=writer, 
+                    dataset=behavior_dataset,
+                    fn_normalize=behavior_dataset.normalize_states,
+                    fn_unnormalize=behavior_dataset.unnormalize_states,
+                    learning_rate=FLAGS.lr,
+                    weight_decay=FLAGS.weight_decay,
+                    target_reward=FLAGS.path)
+      model_mb.load("/home/fabian/msc/f110_dope/ws_ope/logdir/mb/mb_model_110000", "new_model")
 
     model_fqe = QFitter(behavior_dataset.states.shape[1],#env.observation_spec().shape[0],
                 env.action_spec().shape[1], FLAGS.lr, FLAGS.weight_decay,
@@ -491,14 +508,17 @@ def main(_):
     if i % FLAGS.eval_interval == 0:
       if FLAGS.dr:
         print("Starting DR")
-        pred_return, pred_std = dr_model.estimate_returns(get_target_actions, get_target_logprobs)
+        pred_return, pred_std = dr_model.estimate_returns(get_target_actions, get_target_logprobs, algo=FLAGS.algo)
         pred_returns = behavior_dataset.unnormalize_rewards(pred_return)
         std = behavior_dataset.unnormalize_rewards(pred_std)
         pred_returns *= (1-FLAGS.discount)
         std *= (1-FLAGS.discount)
+        writer.add_scalar(f"eval/mean_{FLAGS.algo}", float(pred_returns), global_step=i)
+        writer.add_scalar(f"eval/std_{FLAGS.algo}", float(std), global_step=i)
         print("pred returns", pred_returns)
         print("std", std)
         print("############# DR finished ##############")
+        exit()
       if FLAGS.algo == "mb":
         horizon = 500
         print("Starting evaluation")
@@ -559,8 +579,8 @@ def main(_):
                                   get_action=get_target_actions,)
           print(f"eval ds {eval_agents[j]}: {eval_ds}")
         """
-        model.save(save_path, i=0)
-        print("saved as", save_path, 0)
+        #model.save(save_path, i=0)
+        #print("saved as", save_path, 0)
       if FLAGS.algo == "fqe_mb":
         print("Running fqe mb")
         pred_returns, std = model.estimate_returns(behavior_dataset.initial_states,

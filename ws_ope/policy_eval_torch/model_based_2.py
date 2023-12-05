@@ -804,6 +804,7 @@ class ModelBased2(object):
                 # already handled by the for loop
                 # all_state_batches = torch.cat([all_state_batches, state_batch.unsqueeze(1)], dim=1)
                 #print(state_batch.shape)
+                # print("ji")
                 for i in range(horizon):
                     assert len(state_batch.shape) == 2
                     assert state_batch.shape[0] <= batch_size
