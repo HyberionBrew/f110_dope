@@ -40,7 +40,7 @@ import numpy as np
 # from tf_agents.environments import gym_wrapper
 # from tf_agents.environments import suite_mujoco
 import tqdm
-
+from ftg_agents.agents_numpy import StochasticContinousFTGAgent
 
 from tensorboardX import SummaryWriter
 # from ftg_agents.agents import *
@@ -58,6 +58,8 @@ import torch
 from policy_eval_torch.dataset import F110Dataset
 from policy_eval_torch.q_model import FQEMB
 from policy_eval_torch.model_sim import SimBased
+from ftg_agents.agents_torch_wrapper import StochasticContinousFTGTorchWrapper
+
 
 EPS = np.finfo(np.float32).eps
 FLAGS = flags.FLAGS
@@ -105,7 +107,10 @@ flags.DEFINE_bool('use_torch', False, 'Whether to use torch (which is the new mo
 flags.DEFINE_integer('clip_trajectory_max', 0, 'Max trajectory length')
 flags.DEFINE_bool('dr', False, 'Whether to use doubly robust')
 flags.DEFINE_bool('sim_model', False, "Wheter to use the simulation enviroment as the model")
-
+flags.DEFINE_float('speed_multiplier', 1.0, 'Size of speed multiplier higher is slower')
+flags.DEFINE_integer('gap_blocker', 2, 'FTG gap block')
+flags.DEFINE_bool('ftg', False, 'Whether to use ftg agent')
+flags.DEFINE_integer('subsample_dataset', 1, 'Subsample the dataset')
 
 def make_hparam_string(json_parameters=None, **hparam_str_dict):
   if json_parameters:
@@ -122,7 +127,7 @@ def get_infinite_iterator(dataloader):
         for data in dataloader:
             yield data
 
-def create_save_dir(experiment_directory):
+def create_save_dir(experiment_directory, target_policy):
     save_directory = os.path.join(FLAGS.save_dir, experiment_directory)
     if not os.path.exists(save_directory):
       os.makedirs(save_directory)
@@ -143,14 +148,16 @@ def create_save_dir(experiment_directory):
     if not os.path.exists(save_directory):
       os.makedirs(save_directory)
     # now the target policy directory
-    save_directory = os.path.join(save_directory, f"{FLAGS.target_policy}")
+    save_directory = os.path.join(save_directory, f"{target_policy}")
     if not os.path.exists(save_directory):
       os.makedirs(save_directory)
     return save_directory
 
 def main(_):
-  
-  save_path = create_save_dir("2311_2")
+  target_policy = FLAGS.target_policy
+  if FLAGS.ftg:
+    target_policy = f"StochasticContinousFTGAgent_{FLAGS.speed_multiplier}_{FLAGS.gap_blocker}_0.2_0.3_2.0"
+  save_path = create_save_dir(f"0712_{FLAGS.subsample_dataset}", target_policy)
   
 
   np.random.seed(FLAGS.seed)
@@ -162,8 +169,8 @@ def main(_):
   time = now.strftime("%Y-%m-%d-%H-%M-%S")
 
   hparam_str = make_hparam_string(
-      seed=FLAGS.seed, env_name=FLAGS.env_name, algo='mb',
-      target_policy=FLAGS.target_policy, 
+      seed=FLAGS.seed, env_name=FLAGS.env_name, algo=FLAGS.algo,
+      target_policy=target_policy, 
       std=FLAGS.target_policy_std, time=time, target_policy_noisy=FLAGS.target_policy_noisy, noise_scale=FLAGS.noise_scale)
 
   writer = SummaryWriter(log_dir= os.path.join(save_path, hparam_str))
@@ -186,12 +193,12 @@ def main(_):
       normalize_states=FLAGS.normalize_states,
       normalize_rewards=False,#FLAGS.normalize_rewards,
       path = f"/home/fabian/msc/f110_dope/ws_ope/f1tenth_orl_dataset/data/{FLAGS.path}", #trajectories.zarr",
-      exclude_agents = ['progress_weight', 'raceline_delta_weight', 'min_action_weight'],#['det'], #+ [FLAGS.target_policy] , #+ ["min_lida", "raceline"],
+      exclude_agents = ['StochasticContinousFTGAgent_0.5_2_0.2_0.3_2.0','StochasticContinousFTGAgent_0.5_5_0.2_0.3_2.0'],#,'StochasticContinousFTGAgent_3.0_5_0.2_0.3_2.0'], #'progress_weight', 'raceline_delta_weight', 'min_action_weight'],#['det'], #+ [FLAGS.target_policy] , #+ ["min_lida", "raceline"],
       alternate_reward=FLAGS.alternate_reward,
       include_timesteps_in_obs = True,
       only_terminals=True,
       clip_trajectory_length= clip_trajectory_length,
-      sample_from_trajectories= 50,
+      sample_from_trajectories= FLAGS.subsample_dataset,
       )
   eval_datasets = []
   
@@ -200,7 +207,7 @@ def main(_):
   print(behavior_dataset.reward_mean, behavior_dataset.reward_std,
         behavior_dataset.state_mean,
       behavior_dataset.state_std,)
-  
+  """
   for i, agent in enumerate(eval_agents):
     evaluation_dataset = F110Dataset(
       env,
@@ -210,7 +217,7 @@ def main(_):
       #bootstrap=FLAGS.bootstrap,
       #debug=False,
       path = f"/home/fabian/msc/f110_dope/ws_ope/f1tenth_orl_dataset/data/{FLAGS.path}", #trajectories.zarr",
-      only_agents = [agent], #['det'], #+ [FLAGS.target_policy] , #+ ["min_lida", "raceline"],
+      only_agents = [],#[agent], #['det'], #+ [FLAGS.target_policy] , #+ ["min_lida", "raceline"],
       #scans_as_states=False,
       alternate_reward=FLAGS.alternate_reward,
       include_timesteps_in_obs = True,
@@ -223,7 +230,7 @@ def main(_):
       sample_from_trajectories= 50,
       )
     eval_datasets.append(evaluation_dataset)
-      
+    """
 
   print("Finished loading F110 Dataset")
   
@@ -237,7 +244,10 @@ def main(_):
   max_reward = behavior_dataset.rewards.max()
   print(min_reward)
   print(max_reward)
-  actor = F110Actor(FLAGS.target_policy, deterministic=False) #F110Stupid()
+  if not FLAGS.ftg:
+    actor = F110Actor(FLAGS.target_policy, deterministic=False) #F110Stupid()
+  else:
+    actor = StochasticContinousFTGAgent(gap_blocker = FLAGS.gap_blocker, speed_multiplier=FLAGS.speed_multiplier)
   model_input_normalizer = Normalize()
 
   """
@@ -259,7 +269,7 @@ def main(_):
 
       # get scans
       if scans is not None:
-        laser_scan = scans[start_idx:end_idx]
+        laser_scan = scans[start_idx:end_idx].cpu().numpy()
       else:
         laser_scan = F110Env.get_laser_scan(batch_states_unnorm, subsample_laser) # TODO! rename f110env to dataset_env
         #print("Scan 1")
@@ -275,7 +285,7 @@ def main(_):
       # now also append the laser scan
       model_input_dict['lidar_occupancy'] = laser_scan
       #print("model input dict")
-      print(model_input_dict)
+      # print(model_input_dict)
       batch_actions = actor(
         model_input_dict,
         std=FLAGS.target_policy_std)[1]
@@ -288,7 +298,7 @@ def main(_):
     actions_list = [torch.from_numpy(action) for action in actions_list]
     actions = torch.concat(actions_list, axis=0)
     # print(actions)
-    return actions
+    return actions.float()
 
   def get_target_logprobs(states,actions,scans=None, batch_size=5000):
     num_batches = int(np.ceil(len(states) / batch_size))
@@ -307,7 +317,7 @@ def main(_):
 
       # get scans
       if scans is not None:
-        laser_scan = scans[start_idx:end_idx]
+        laser_scan = scans[start_idx:end_idx].cpu().numpy()
       else:
         laser_scan = F110Env.get_laser_scan(batch_states_unnorm, subsample_laser) # TODO! rename f110env to dataset_env
         laser_scan = model_input_normalizer.normalize_laser_scan(laser_scan)
@@ -333,7 +343,7 @@ def main(_):
     # Concatenate the collected log_probs from all batches
     log_probs = [torch.from_numpy(log_prob) for log_prob in log_probs_list]
     log_probs = torch.concat(log_probs, axis=0)
-    return log_probs
+    return log_probs.float()
 
   if FLAGS.algo == "mb":
     model = ModelBased2(behavior_dataset.states.shape[1],
@@ -356,8 +366,8 @@ def main(_):
                     timestep_constant = behavior_dataset.timestep_constant,
                     writer=writer)
     
-    if True:
-      fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/2011/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{FLAGS.target_policy}"
+    if False:
+      fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/0512_2_{FLAGS.subsample_dataset}/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{target_policy}"
       print("Loading from ", fqe_load)
       model.load(fqe_load,
                     i=0)
@@ -579,8 +589,8 @@ def main(_):
                                   get_action=get_target_actions,)
           print(f"eval ds {eval_agents[j]}: {eval_ds}")
         """
-        #model.save(save_path, i=0)
-        #print("saved as", save_path, 0)
+        model.save(save_path, i=0) # always save to zero, whatever
+        print("saved as", save_path, 0)
       if FLAGS.algo == "fqe_mb":
         print("Running fqe mb")
         pred_returns, std = model.estimate_returns(behavior_dataset.initial_states,
