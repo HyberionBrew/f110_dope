@@ -157,7 +157,7 @@ def main(_):
   target_policy = FLAGS.target_policy
   if FLAGS.ftg:
     target_policy = f"StochasticContinousFTGAgent_{FLAGS.speed_multiplier}_{FLAGS.gap_blocker}_0.2_0.3_2.0"
-  save_path = create_save_dir(f"0712_{FLAGS.subsample_dataset}", target_policy)
+  save_path = create_save_dir(f"1212_min_max_sparse2_{FLAGS.subsample_dataset}", target_policy)
   
 
   np.random.seed(FLAGS.seed)
@@ -193,7 +193,7 @@ def main(_):
       normalize_states=FLAGS.normalize_states,
       normalize_rewards=False,#FLAGS.normalize_rewards,
       path = f"/home/fabian/msc/f110_dope/ws_ope/f1tenth_orl_dataset/data/{FLAGS.path}", #trajectories.zarr",
-      exclude_agents = ['StochasticContinousFTGAgent_0.5_2_0.2_0.3_2.0','StochasticContinousFTGAgent_0.5_5_0.2_0.3_2.0'],#,'StochasticContinousFTGAgent_3.0_5_0.2_0.3_2.0'], #'progress_weight', 'raceline_delta_weight', 'min_action_weight'],#['det'], #+ [FLAGS.target_policy] , #+ ["min_lida", "raceline"],
+      exclude_agents = ['StochasticContinousFTGAgent_0.5_2_0.2_0.3_2.0','StochasticContinousFTGAgent_0.5_5_0.2_0.3_2.0','StochasticContinousFTGAgent_5.0_2_0.2_0.3_2.0','StochasticContinousFTGAgent_5.0_5_0.2_0.3_2.0'],#,'StochasticContinousFTGAgent_3.0_5_0.2_0.3_2.0'], #'progress_weight', 'raceline_delta_weight', 'min_action_weight'],#['det'], #+ [FLAGS.target_policy] , #+ ["min_lida", "raceline"],
       alternate_reward=FLAGS.alternate_reward,
       include_timesteps_in_obs = True,
       only_terminals=True,
@@ -362,12 +362,14 @@ def main(_):
     model = QFitter(behavior_dataset.states.shape[1],#env.observation_spec().shape[0],
                     env.action_spec().shape[1], FLAGS.lr, FLAGS.weight_decay,
                     FLAGS.tau, 
+                    FLAGS.discount,
                     use_time=True, 
                     timestep_constant = behavior_dataset.timestep_constant,
                     writer=writer)
-    
+    print("rewards", behavior_dataset.rewards)
     if False:
-      fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/0512_2_{FLAGS.subsample_dataset}/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{target_policy}"
+      # fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/0912_4_1/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{target_policy}"
+      fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/1212_min_max_1/fqe/trajectories_1112.zarr/{FLAGS.clip_trajectory_max}/{target_policy}"
       print("Loading from ", fqe_load)
       model.load(fqe_load,
                     i=0)
@@ -576,8 +578,11 @@ def main(_):
                             get_target_actions)
         #print("Raw predicted returns", pred_returns)
         pred_returns = behavior_dataset.unnormalize_rewards(pred_returns)
-        print(std)
+        
+       
         std = behavior_dataset.unnormalize_rewards(std)
+        print(pred_returns)
+        print(std)
         pred_returns *= (1-FLAGS.discount)
         std *= (1-FLAGS.discount)
         print("normed,", pred_returns)

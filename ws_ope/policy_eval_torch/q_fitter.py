@@ -14,6 +14,7 @@ class CriticNet(nn.Module):
           action_dim: Action size.
         """
         super(CriticNet, self).__init__()
+        #self.fc1 = nn.Linear(state_dim + action_dim, 1)
         self.fc1 = nn.Linear(state_dim + action_dim, 256)
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 1)
@@ -23,11 +24,12 @@ class CriticNet(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         return torch.squeeze(self.fc3(x), -1)
-    
+        #return torch.squeeze(self.fc1(x), -1)
+
 class QFitter(nn.Module):
     """A critic network that estimates a dual Q-function."""
 
-    def __init__(self, state_dim, action_dim, critic_lr, weight_decay, tau, use_time=False, timestep_constant=0.01, log_frequency=500, writer=None):
+    def __init__(self, state_dim, action_dim, critic_lr, weight_decay, tau, discount, use_time=False, timestep_constant=0.01, log_frequency=500, writer=None):
         """Creates networks.
         
         Args:
@@ -53,7 +55,7 @@ class QFitter(nn.Module):
         self.log_frequency = log_frequency
         self.optimizer_iterations = 0
         self.writer = writer
-
+        self.discount = discount
     # write device attibute
     def to(self, device):
         self.critic.to(device)
@@ -82,7 +84,7 @@ class QFitter(nn.Module):
             results.append(batch_result)
 
         final_result = torch.cat(results, dim=0)
-        return final_result
+        return final_result / (1 - self.discount)
     
     def update(self, states, actions, next_states, next_actions, rewards, masks, weights, discount, min_reward, max_reward, timesteps=None):
         """Updates critic parameters."""
@@ -103,19 +105,19 @@ class QFitter(nn.Module):
         """
         #exit()
         with torch.no_grad():
-            next_q = self.critic_target(next_states, next_actions) #/ (1 - discount)
+            next_q = self.critic_target(next_states, next_actions) / (1 - discount)
             #print("-------")
             #print(rewards.mean())
             #print(masks.mean())
             #print(next_q.mean())
-            target_q = (rewards + discount * masks * next_q)# *(1-discount)
+            target_q = (rewards + discount * masks * next_q) #*(1-discount) #here
             #print("hello", target_q.mean())
             target_q = torch.clamp(target_q, min_reward,max_reward)
         
         
         self.optimizer.zero_grad()
 
-        q = self.critic(states, actions) #/ (1 - discount)
+        q = self.critic(states, actions) / (1 - discount) #here
         #print(target_q.mean())
         #print(q.mean())
         critic_loss = (torch.sum((target_q - q) ** 2 * weights) / torch.sum(weights))
@@ -162,14 +164,14 @@ class QFitter(nn.Module):
         return weighted_mean, weighted_stddev
     """
 
-    def estimate_returns(self, initial_states, initial_weights, get_action, action=None, timesteps=None, reduction=True):
+    def estimate_returns(self, initial_states, initial_weights, get_action, action_timesteps, action=None, timesteps=None, reduction=True):
         """Estimate returns with fitted q learning."""
         with torch.no_grad():
             weighted_stddev = 0.0
             if action is not None:
                 initial_actions = action
             else:
-                initial_actions = get_action(initial_states)
+                initial_actions = get_action(initial_states,action_timesteps)
             if timesteps is not None:
                 preds = self(initial_states, initial_actions, timesteps=timesteps)
             else:
@@ -181,14 +183,14 @@ class QFitter(nn.Module):
                 weighted_mean = torch.sum(preds * initial_weights) / torch.sum(initial_weights)
                 weighted_variance = torch.sum(initial_weights * (preds - weighted_mean) ** 2) / torch.sum(initial_weights)
                 weighted_stddev = torch.sqrt(weighted_variance)
-        return weighted_mean, weighted_stddev
+        return weighted_mean , weighted_stddev
 
     def estimate_returns_unweighted(self, initial_states, get_action):
         """Estimate returns unweighted."""
         with torch.no_grad():
             initial_actions = get_action(initial_states)
             preds = self(initial_states, initial_actions)
-        return preds
+        return preds 
     
     def save(self, path, i=0):
         """Save the model."""
