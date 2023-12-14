@@ -14,8 +14,11 @@ Checkout the conda env:
 Install the following:
 
 `pip install -e f1tenth_gym`
+
 `pip install -e f1tenth_orl_dataset`
+
 `pip install -e f110_sim_env`
+
 `pip install -e stochastic_ftg_agents`
 
 
