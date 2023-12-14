@@ -25,6 +25,16 @@ class CriticNet(nn.Module):
         x = F.relu(self.fc2(x))
         return torch.squeeze(self.fc3(x), -1)
         #return torch.squeeze(self.fc1(x), -1)
+  
+class SimplifiedNetwork(nn.Module):
+    def __init__(self, state_dim, action_dim):
+        super(SimplifiedNetwork, self).__init__()
+        # Only one linear layer
+        self.linear = nn.Linear(state_dim + action_dim, 1)
+
+    def forward(self, states, actions):
+        x = torch.cat([states, actions], dim=-1)
+        return torch.squeeze(self.linear(x), -1)
 
 class QFitter(nn.Module):
     """A critic network that estimates a dual Q-function."""
@@ -45,8 +55,8 @@ class QFitter(nn.Module):
             self.use_time = True
             self.timestep_constant = timestep_constant
 
-        self.critic = CriticNet(state_dim, action_dim)
-        self.critic_target = CriticNet(state_dim, action_dim)
+        self.critic = SimplifiedNetwork(state_dim,action_dim) #CriticNet(state_dim, action_dim)
+        self.critic_target = SimplifiedNetwork(state_dim,action_dim) #CriticNet(state_dim, action_dim)
 
         self.tau = tau
         self.soft_update(self.critic, self.critic_target, tau=1.0)

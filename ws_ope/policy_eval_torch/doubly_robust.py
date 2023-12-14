@@ -7,7 +7,7 @@ class DR_estimator:
         self.model = model
         self.behavior_dataset = behavior_dataset
         self.discount = discount
-        self.max_trajectory_length = max_trajectory_length
+        #self.max_trajectory_length = max_trajectory_length
     
     def estimate_returns(self,get_target_actions, get_target_logprobs, algo="fqe"):
         import matplotlib.pyplot as plt
@@ -24,12 +24,14 @@ class DR_estimator:
             target_log_probs = get_target_logprobs(self.behavior_dataset.states, 
                                                 self.behavior_dataset.actions,
                                                 #added
+                                                self.behavior_dataset.timesteps,
                                                 scans = self.behavior_dataset.scans)
             print("nans, behavior_log_probs", np.isnan(behavior_log_probs).sum())
             ############# DR part #############
             offset, std_deviation = self.model.estimate_returns(self.behavior_dataset.initial_states,
                                                             self.behavior_dataset.initial_weights,
-                                                            get_action=get_target_actions,)
+                                                            get_action=get_target_actions,
+                                                            action_timesteps = torch.zeros_like(self.behavior_dataset.initial_states[:,0]),)
             if algo=="fqe":
                 q_values = self.model(self.behavior_dataset.states,
                                 self.behavior_dataset.actions,
@@ -42,7 +44,8 @@ class DR_estimator:
             n_samples = 5
             
             if algo=="fqe":
-                next_actions = [get_target_actions(self.behavior_dataset.states_next, 
+                next_actions = [get_target_actions(self.behavior_dataset.states_next,
+                                                  (self.behavior_dataset.timesteps + self.behavior_dataset.timestep_constant), 
                                             scans=self.behavior_dataset.scans_next)
                     for _ in range(n_samples)]
                 #assert np.isnan(next_actions).sum() == 0

@@ -59,7 +59,8 @@ from policy_eval_torch.dataset import F110Dataset
 from policy_eval_torch.q_model import FQEMB
 from policy_eval_torch.model_sim import SimBased
 from ftg_agents.agents_torch_wrapper import StochasticContinousFTGTorchWrapper
-
+from ftg_agents.agents_numpy import DoubleAgentWrapper
+from ftg_agents.agents_numpy import SwitchingAgentWrapper
 
 EPS = np.finfo(np.float32).eps
 FLAGS = flags.FLAGS
@@ -111,6 +112,7 @@ flags.DEFINE_float('speed_multiplier', 1.0, 'Size of speed multiplier higher is 
 flags.DEFINE_integer('gap_blocker', 2, 'FTG gap block')
 flags.DEFINE_bool('ftg', False, 'Whether to use ftg agent')
 flags.DEFINE_integer('subsample_dataset', 1, 'Subsample the dataset')
+flags.DEFINE_bool("no_train", False, "Whether to train the model")
 
 def make_hparam_string(json_parameters=None, **hparam_str_dict):
   if json_parameters:
@@ -156,8 +158,9 @@ def create_save_dir(experiment_directory, target_policy):
 def main(_):
   target_policy = FLAGS.target_policy
   if FLAGS.ftg:
-    target_policy = f"StochasticContinousFTGAgent_{FLAGS.speed_multiplier}_{FLAGS.gap_blocker}_0.2_0.3_2.0"
-  save_path = create_save_dir(f"1312_small_FQE_{FLAGS.subsample_dataset}", target_policy)
+    #target_policy = f"StochasticContinousFTGAgent_{FLAGS.speed_multiplier}_{FLAGS.gap_blocker}_0.2_0.3_2.0"
+    target_policy = "slowest_fastest_100"#"switching_slowest_fastest"
+  save_path = create_save_dir(f"mixed_agents", target_policy)
   
 
   np.random.seed(FLAGS.seed)
@@ -180,7 +183,7 @@ def main(_):
   # only terminals are available as of right now 
       **dict(name='f110_with_dataset-v0',
           config = dict(map="Infsaal", num_agents=1,
-          params=dict(vmin=0.0, vmax=2.0)),
+          params=dict(vmin=0.5, vmax=2.0)),
             render_mode="human")
   )
   env = F110Env
@@ -244,16 +247,23 @@ def main(_):
   max_reward = behavior_dataset.rewards.max()
   print(min_reward)
   print(max_reward)
+  double_agent = True
   if not FLAGS.ftg:
     actor = F110Actor(FLAGS.target_policy, deterministic=False) #F110Stupid()
   else:
-    actor = StochasticContinousFTGAgent(gap_blocker = FLAGS.gap_blocker, speed_multiplier=FLAGS.speed_multiplier)
+    actor1 = StochasticContinousFTGAgent(gap_blocker = FLAGS.gap_blocker, speed_multiplier=FLAGS.speed_multiplier)
+    if double_agent:
+      actor2 = StochasticContinousFTGAgent(gap_blocker = FLAGS.gap_blocker, speed_multiplier=5.0)
+      actor = DoubleAgentWrapper(actor1, actor2, timestep_switch=100)
+      #actor = SwitchingAgentWrapper(actor1, actor2)
+    else:
+      actor = actor1
   model_input_normalizer = Normalize()
 
   """
   @brief input shape is (batch_size, obs_dim), state needs to be normalized!!
   """
-  def get_target_actions(states, action_timesteps=None, scans= None, batch_size=5000):
+  def get_target_actions(states,timesteps, scans= None, batch_size=5000):
     num_batches = int(np.ceil(len(states) / batch_size))
     actions_list = []
     # batching, s.t. we dont run OOM
@@ -287,6 +297,7 @@ def main(_):
       #print("model input dict")
       # print(model_input_dict)
       batch_actions = actor(
+        timesteps[start_idx:end_idx].clone() * FLAGS.clip_trajectory_max,
         model_input_dict,
         std=FLAGS.target_policy_std)[1]
       #print(batch_actions)
@@ -300,7 +311,7 @@ def main(_):
     # print(actions)
     return actions.float()
 
-  def get_target_logprobs(states,actions,action_timesteps=None,scans=None, batch_size=5000):
+  def get_target_logprobs(states,actions,timesteps,scans=None, batch_size=5000):
     num_batches = int(np.ceil(len(states) / batch_size))
     log_probs_list = []
     for i in range(num_batches):
@@ -331,6 +342,7 @@ def main(_):
 
       # Compute log_probs for the current batch
       batch_log_probs = actor(
+          timesteps[start_idx:end_idx].clone() * FLAGS.clip_trajectory_max,
           model_input_dict,
           actions=batch_actions,
           std=FLAGS.target_policy_std)[2]
@@ -366,11 +378,11 @@ def main(_):
                     use_time=True, 
                     timestep_constant = behavior_dataset.timestep_constant,
                     writer=writer)
-    print("rewards", behavior_dataset.rewards)
-    print("max_reward", behavior_dataset.rewards.max())
-    if False:
+    
+    if True:
       # fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/0912_4_1/fqe/{FLAGS.path}/{FLAGS.clip_trajectory_max}/{target_policy}"
-      fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/1212_min_max_sparse3_1/fqe/trajectories_1112.zarr/{FLAGS.clip_trajectory_max}/{target_policy}"
+      fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/mixed_agents/fqe/trajectories_1112.zarr/{FLAGS.clip_trajectory_max}/{target_policy}"
+      #fqe_load = f"/home/fabian/msc/f110_dope/ws_ope/logdir_torch/1212_min_max_1/fqe/trajectories_1112.zarr/{FLAGS.clip_trajectory_max}/{target_policy}"
       print("Loading from ", fqe_load)
       model.load(fqe_load,
                     i=0)
@@ -448,12 +460,14 @@ def main(_):
     if FLAGS.dr:
       # already trained
       pass
+    elif FLAGS.no_train:
+      pass
 
     elif FLAGS.algo == "mb":
       model.update(states, actions, next_states, rewards, masks,
                     weights)
     elif FLAGS.algo == "fqe":
-      
+      #print(timesteps)
       #weights = torch.ones
       #create debug batch, first states, actions...
       #next_actions = get_target_actions(next_states, scans=next_scans)
@@ -489,7 +503,7 @@ def main(_):
       exit()
       """
       
-      next_actions = get_target_actions(next_states, scans=next_scans)
+      next_actions = get_target_actions(next_states, timesteps, scans=next_scans)
       #print("raw")
       #print(rewards.mean())
       max_r = (max_reward*max(FLAGS.clip_trajectory_max,50))
@@ -576,8 +590,8 @@ def main(_):
       if FLAGS.algo == "fqe":
         pred_returns, std = model.estimate_returns(behavior_dataset.initial_states,
                                 behavior_dataset.initial_weights,
-                                get_target_actions,
-                                torch.zeros(behavior_dataset.initial_states.shape[0],1))
+                            get_target_actions,
+                            torch.zeros_like(behavior_dataset.initial_states[:,0]))
         #print("Raw predicted returns", pred_returns)
         pred_returns = behavior_dataset.unnormalize_rewards(pred_returns)
         

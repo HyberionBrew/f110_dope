@@ -23,10 +23,36 @@ def get_target_policy(folder_name):
     return None
 
 
+def get_dict_from_tf(logdir, tag="train/pred returns"):
+    returns = []
+    #print("-----")
+    #print(logdir)
+    # discover the file in the folder
+    run = os.listdir(logdir)[0]
+    logdir = os.path.join(logdir,run)
+
+    for e in summary_iterator(logdir):
+        for v in e.summary.value:
+            if v.tag == tag:
+                content = v.tensor.tensor_content
+                #print(len(content))
+                if len(content)==0:
+                    if hasattr(v, 'simple_value'):
+                        returns.append(float(v.simple_value))
+                    else:
+                        # fallback to 0
+                        returns.append(0.0)
+                elif len(content)==4:
+                    returns.append(struct.unpack('f', content)[0])
+                elif len(content)==8:
+                    returns.append(float(struct.unpack('d', content)[0]))
+    return returns
+
 def get_dict(logdir, tag="train/pred returns"):
     # Dictionary to store returns
     all_returns = {}
     all_folders = get_folders(logdir)
+
     for folder in all_folders:
         dir_path = os.path.join(logdir, folder)
         
@@ -314,6 +340,53 @@ def get_data(skip_inital=0, split_trajectories=0,
                             min_trajectory_length=min_trajectory_length,
                             )
     return root
+
+
+def compute_returns(dataset, 
+                   gamma=0.85):
+    model_names = dataset["infos"]["model_name"]
+    print(len(model_names))
+    change_indices = get_change_indices(model_names) + [len(model_names)]
+    print(change_indices)
+
+    change_indices = np.array(change_indices)-1
+    # for each model calculate the mean discounted reward
+    start_idx = 0
+    #print("Discounted TD Reward")
+    #print(change_indices)
+    names = model_names[change_indices]
+    #print(names)
+    gamma = gamma
+    precomputed_returns = { name: [] for name in names}
+    precomputed_stds = { name: [] for name in names}
+
+    precomputed_mean_returns = { name: [] for name in names}
+    precomputed_mean_stds = { name: [] for name in names}
+    #print(precomputed_returns.keys())
+    means = []
+    stds = []
+    # model_names_.append(model_names[start_idx])
+    start_idx = 0
+    change_indices = np.array(change_indices)+1
+    #print(change_indices)
+    for idx, change_idx in enumerate(change_indices): # this is for each model
+        # count number of collisions for this model
+        #try:
+        # print(start_idx, change_idx)
+        mean_discounted_reward, std_discounted = calculate_discounted_reward(dataset['rewards'][start_idx:change_idx],
+                                    dataset['terminals'][start_idx:change_idx],
+                                    dataset['timeouts'][start_idx:change_idx], gamma=gamma,
+                                    # end=max_timesteps,
+                                    only_consider_full_trajectories=False)
+        # print(f'{model_names[start_idx]}: {mean_discounted_reward} +- {std_discounted} ({mean_discounted_reward* (1-gamma)} +- {std_discounted * (1-gamma)})')
+        means.append(mean_discounted_reward) #* (1-gamma))
+        stds.append(std_discounted* (1-gamma))
+        precomputed_returns[model_names[start_idx]] = mean_discounted_reward* (1-gamma)
+        precomputed_stds[model_names[start_idx]] = std_discounted* (1-gamma)
+        start_idx = change_idx
+            
+    return precomputed_returns, precomputed_stds
+
 def compute_target_rewards(gamma = 0.85, 
                            skip_inital=0, split_trajectories=0, 
                            max_timesteps=50,
@@ -505,6 +578,36 @@ def dataset_statistics(root, path=None):
         plt.savefig(path + "/total_trajectory_length.png")
     plt.show()
 
+def plot_bar_dict(mean_std_dict: dict, name="DR", key_order= None, plt_path=None):
+    assert 'mean' and 'std' in mean_std_dict
+    # Assuming the order of precomputed_returns as the standard order
+    if key_order is None:
+        keys = list(mean_std_dict['mean'].keys())
+    else:
+        keys = key_order
+    precomputed_means_values = [mean_std_dict['mean'][key] for key in keys]
+    precomputed_std_values = [mean_std_dict['std'][key] for key in keys]
+
+    bar_width = 0.7
+    index = np.arange(len(keys))
+    
+    fig, ax = plt.subplots(figsize=(5, 4))
+    bar1 = ax.bar(index, precomputed_means_values, bar_width, yerr=precomputed_std_values, label='Precomputed Means', alpha=0.8, capsize=7)
+    
+    ax.set_xlabel('Agent')
+    ax.set_ylabel(f"Discounted Reward ")
+    ax.set_title(f"Means and Std Deviations: {name} \n")
+    ax.set_xticks(index)
+    ax.set_xticklabels(keys, rotation=45)
+    ax.set_ylim(0, 1)
+    ax.legend()
+    plt.tight_layout()
+    if plt_path is not None:
+        plt.savefig(plt_path + "/precomputed_gt.png")
+    plt.show()
+
+
+
 def plot_bar_precomputed(precomputed_returns, precomputed_stds, name="DR", keys= None, plt_path=None, gamma=None):
     # Assuming the order of precomputed_returns as the standard order
     if keys is None:
@@ -563,6 +666,236 @@ def plot_multiple_models(precomputed_returns, precomputed_stds, models_dict, nam
     plt.show()
 
 
+def plot_bars_from_dict(reward_dict, target, length, methods, sub_keys=["progress_weight"], path=None):
+    print(methods)
+    print(reward_dict.keys())
+    assert np.all([method in reward_dict.keys() for method in methods])
+    assert "ground_truth" in reward_dict.keys()
+    keys_main = methods
+    keys_sub = sub_keys
+
+    bar_width = 0.15
+    num_bars = len(keys_sub)
+
+    r = np.arange(len(keys_main))
+    colors = plt.cm.rainbow(np.linspace(0, 1, num_bars))
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    for i, method in enumerate(methods):
+        print(reward_dict[method][target].keys())
+        mtl = reward_dict[method][target][length]
+        # print(mtl)
+        for j, key_sub in enumerate(keys_sub):
+            label = key_sub if i == 0 else None  # Set label only for the first main group to avoid label repetition in the legend
+            try:
+                mean = mtl[key_sub]["mean"]
+                std = mtl[key_sub]["std"]
+            except KeyError:
+                mean = 0.0
+                std = 0.0
+                print("Not all values yet available")
+            #print(mean)
+            ax.bar(r[i] + j*bar_width - (bar_width*(num_bars-1)/2), 
+                    mean, 
+                    yerr=std, 
+                    width=bar_width, 
+                    label=label, alpha=0.8, 
+                    capsize=7, color=colors[j])
+    ax.set_xlabel('OPE Type')
+    ax.set_ylabel('Discounted Reward')
+    ax.set_title(f"Comparison of {reward_dict.keys()} \n (target: {target}, length: {length})")
+    ax.set_xticks(r)
+    ax.set_xticklabels(keys_main)
+    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
+    plt.tight_layout()
+    if path is not None:
+        plt.savefig(path)
+    plt.show()
+
+from scipy import stats
+
+def extract_ordered_gt(all_rewards, target_rewards, target, methods):
+    ordered_per_model = {}
+    #print(all_rewards.keys())
+    #print(target_rewards)
+    #print(target)
+    set_method_keys = False
+    for length in all_rewards[methods[0]][target].keys():
+        ordered_per_model[length] = {}
+        for method in methods:
+            gt = all_rewards['ground_truth'][target][length]
+            gt_keys = gt.keys()
+            method_rewards = all_rewards[method][target][length]
+            if not(set_method_keys):
+                method_keys = method_rewards.keys()
+                set_method_keys = True
+            #print(gt)
+            #print(method_rewards)
+            method_ordered = []
+            gt_ordered = []
+            for key in method_keys:
+                gt_ordered.append(gt[key]["mean"])
+                method_ordered.append(method_rewards[key]["mean"])
+            ordered_per_model[length][method] = (gt_ordered, method_ordered)
+            #print(f"keys ordered: ", method_keys)
+            #print(f"gt ordered: ", gt_ordered)
+            #print(f"method ordered: ", method_ordered)
+    print(method_keys)
+    return ordered_per_model, method_keys
+            #res = stats.spearmanr(method_ordered, gt_ordered)
+            #spearman_per_model[length][method] = float(res.correlation)
+
+import matplotlib.colors as colors
+
+def compute_data_matrix(all_rewards, target_rewards, target, methods, fn, length_order=["50","250","1000"]):
+    ordered_dict, method_keys = extract_ordered_gt(all_rewards, target_rewards, target, methods)
+    # print(ordered_dict)
+    # print("----")
+    data_matrix = []
+    for length in length_order:
+        data_row = []
+        for method in methods:
+            targets = ordered_dict[length][method][0]
+            y = ordered_dict[length][method][1]
+            res = fn(targets, y)
+            data_row.append(res)
+        data_matrix.append(data_row)
+    data_matrix = np.array(data_matrix)
+    return data_matrix, length_order
+
+def spearmanr(targets, y):
+    res = stats.spearmanr(y, targets)
+    return float(res.correlation)
+            # print(res.correlation.shape)
+            # print(res.pvalue)
+
+def plot_spearman(all_rewards, target_rewards, methods, lengths=["50","250","1000"]):
+    assert 'ground_truth' in all_rewards.keys()
+    for target in target_rewards:
+        data_matrix, length_order = compute_data_matrix(all_rewards, 
+                            target_rewards, 
+                            target, 
+                            methods, 
+                            spearmanr, length_order=lengths)
+        #print(data_matrix)
+        fig, ax = plt.subplots(figsize=(12, 7))
+        cmap = colors.ListedColormap(['red', 'green'])
+        bounds = [-1.0, 0.6, 1.1]  # Adjusting upper bound to include all values >0.5
+        norm = colors.BoundaryNorm(bounds, cmap.N)
+
+        cax = ax.matshow(data_matrix, cmap=cmap, norm=norm)
+
+        # Annotating the actual values
+        for i in range(data_matrix.shape[0]):
+            for j in range(len(methods)):
+                ax.text(j, i, f"{data_matrix[i, j]:.2f}", va='center', ha='center', color='black' if data_matrix[i, j] < 0.7 else 'white')
+
+        ax.set_xticks(np.arange(len(methods)))
+        ax.set_yticks(np.arange(data_matrix.shape[0]))
+        #print(data_matrix.shape)
+
+        ax.set_xticklabels([str(key) for key in methods])
+        #print(ordered_dict.keys())
+        ax.set_yticklabels(length_order)
+
+        ax.set_xlabel('Models')
+        ax.set_ylabel('Discounts')
+        # set title the target
+        ax.set_title(f"Spearman Correlation: {target}")
+        plt.colorbar(cax, ticks=[0, 0.5, 1.5])
+
+        plt.show()
+        # plt.savefig(f"{path}/spearman.png")
+        # clear figure
+        plt.clf()
+
+def mse(targets, y):
+    #print(targets)
+    #print(y)
+    res = np.sum(abs(np.array(targets) - np.array(y))/np.array(targets))/ len(targets)
+    return res
+
+
+def plot_mse(all_rewards, target_rewards, methods, lengths=["50","250","1000"]):
+    assert 'ground_truth' in all_rewards.keys()
+    for target in target_rewards:
+        ordered_dict = extract_ordered_gt(all_rewards, target_rewards, target, methods)
+        data_matrix, length_order = compute_data_matrix(all_rewards, 
+                            target_rewards, 
+                            target, 
+                            methods, 
+                            mse,
+                            length_order=lengths)
+        #print(data_matrix)
+        fig, ax = plt.subplots(figsize=(12, 7))
+        cmap = colors.LinearSegmentedColormap.from_list('white_red', ['white', 'red'], N=256)
+        max_error_bound = 0.4 #max(0.2, np.max(data_matrix))
+        #bounds = [0, max_error_bound / 2, max_error_bound]
+        norm = colors.PowerNorm(gamma=0.5, vmin=0, vmax=max_error_bound)
+
+        cax = ax.matshow(data_matrix, cmap=cmap, norm=norm)
+
+
+        # Annotating the actual values
+        for i in range(len(length_order)):
+            for j in range(len(methods)):
+                ax.text(j, i, f"{data_matrix[i, j]:.2f}", va='center', ha='center', color='black')
+
+        ax.set_xticks(np.arange(len(methods)))
+        ax.set_yticks(np.arange(len(length_order)))
+
+        ax.set_xticklabels([str(key) for key in methods])
+        ax.set_yticklabels(length_order)
+
+        ax.set_xlabel('Models')
+        ax.set_ylabel('Discounts')
+        ax.set_title(f"Relative error: {target}")
+        plt.colorbar(cax)
+        plt.show()
+        plt.clf()
+
+def k1(targets, y):
+    # is one if the largest in targets is a the same spot as in y
+    max_targets = np.argmax(targets)
+    max_y = np.argmax(y)
+    return int(max_targets == max_y)
+
+def plot_k1(all_rewards, target_rewards, methods, lengths=["50","250","1000"]):
+    assert 'ground_truth' in all_rewards.keys()
+    for target in target_rewards:
+        data_matrix, length_order = compute_data_matrix(all_rewards, 
+                    target_rewards, 
+                    target, 
+                    methods, 
+                    k1,
+                    length_order=lengths)
+        print(data_matrix)
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+        cmap = colors.ListedColormap(['red', 'green'])
+        bounds = [0, 0.5, 1]
+        norm = colors.BoundaryNorm(bounds, cmap.N)
+
+        cax = ax.matshow(data_matrix, cmap=cmap, norm=norm)
+
+        # Annotating the actual values
+        for i in range(len(length_order)):
+            for j in range(len(methods)):
+                ax.text(j, i, f"{data_matrix[i, j]:.2f}", va='center', ha='center', color='black')
+
+        ax.set_xticks(np.arange(len(methods)))
+        ax.set_yticks(np.arange(len(length_order)))
+
+        ax.set_xticklabels([str(key) for key in methods])
+        print(length_order)
+        ax.set_yticklabels(length_order)
+
+        ax.set_xlabel('Models')
+        ax.set_ylabel('Discounts')
+        ax.set_title(f"K@1: {target}")
+        plt.colorbar(cax, ticks=[0, 1])
+        plt.show()
+        plt.clf()
 
 def plot_bar_vs(precomputed_returns, precomputed_stds, computed_means, computed_std_devs ,name = "DR", plt_path=None, gamma=None):
     # Assuming the order of precomputed_returns as the standard order
