@@ -1,8 +1,17 @@
 # Install
+
+Make sure you are on the branch 'release_new'.
+
+After cloning init submodules:
+`git submodule update --init --recursive`
+
 First create a conda env:
 `conda env create -f environment.yml`
 
-Run the following:
+Checkout the conda env:
+`conda activate release`
+
+Install the following:
 
 `pip install -e f1tenth_gym`
 `pip install -e f1tenth_orl_dataset`
@@ -18,7 +27,7 @@ If you dont want to create your own dataset skip to step 2).
 
 1) You will need a dataset, either create this by following the create_datatset notebook or get one from me.
 
-2) In explore_dataset notebook you can look at the data, some examples are there - however, to use the plotting utilities library you currently need tf - ups, need to change that.
+2) In explore_dataset notebook you can look at the data, some examples are there - however, to use the plotting utilities library you currently need tf (not in the conda env) - ups, need to change that.
 
 3) If you want to change a reward, the original reward is never overwritten, instead you set the flag --alternate_reward to true. Computing the alternate reward can like this (in the f1tenth_orl_dataset/f110_orl_dataset folder):
 `python relabel_reward.py --reward_config=reward_sparse.json --path=/home/fabian/msc/f110_dope/ws_release/datasets_1412.zarr`
