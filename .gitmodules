@@ -1,0 +1,15 @@
+[submodule "f1tenth_gym"]
+	path = f1tenth_gym
+	url = git@github.com:HyberionBrew/f1tenth_gym.git
+[submodule "f1tenth_orl_dataset"]
+	path = f1tenth_orl_dataset
+	url = git@github.com:HyberionBrew/f1tenth_orl_dataset.git
+[submodule "f110_sim_env"]
+	path = f110_sim_env
+	url = git@github.com:HyberionBrew/f110_sim_env.git
+[submodule "policy_eval"]
+	path = policy_eval
+	url = git@github.com:HyberionBrew/policy_eval.git
+[submodule "stochastic_ftg_agents"]
+	path = stochastic_ftg_agents
+	url = git@github.com:HyberionBrew/stochastic_ftg_agents.git

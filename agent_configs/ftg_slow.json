@@ -1,0 +1,7 @@
+{
+    "agent_class": "FTGAgent",
+    "agent_parameters": {
+        "speed_multiplier": 5.0,
+        "gap_blocker": 2
+    }
+}
