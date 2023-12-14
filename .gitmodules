@@ -1,6 +1,7 @@
 [submodule "f1tenth_gym"]
 	path = f1tenth_gym
 	url = git@github.com:HyberionBrew/f1tenth_gym.git
+	branch = v1.0.0
 [submodule "f1tenth_orl_dataset"]
 	path = f1tenth_orl_dataset
 	url = git@github.com:HyberionBrew/f1tenth_orl_dataset.git
@@ -10,6 +11,8 @@
 [submodule "policy_eval"]
 	path = policy_eval
 	url = git@github.com:HyberionBrew/policy_eval.git
+	branch = torch
 [submodule "stochastic_ftg_agents"]
 	path = stochastic_ftg_agents
 	url = git@github.com:HyberionBrew/stochastic_ftg_agents.git
+	branch = dev
