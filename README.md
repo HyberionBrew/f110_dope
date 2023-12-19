@@ -14,8 +14,11 @@ Checkout the conda env:
 Install the following:
 
 `pip install -e f1tenth_gym`
+
 `pip install -e f1tenth_orl_dataset`
+
 `pip install -e f110_sim_env`
+
 `pip install -e stochastic_ftg_agents`
 
 
@@ -29,7 +32,8 @@ If you dont want to create your own dataset skip to step 2).
 
 2) In explore_dataset notebook you can look at the data, some examples are there - however, to use the plotting utilities library you currently need tf (not in the conda env) - ups, need to change that.
 
-3) If you want to change a reward, the original reward is never overwritten, instead you set the flag --alternate_reward to true. Computing the alternate reward can like this (in the f1tenth_orl_dataset/f110_orl_dataset folder):
+3) If you want to change a reward, the original reward is never overwritten, instead you set the flag --alternate_reward to true. Computing the alternate reward can be done like this (in the f1tenth_orl_dataset/f110_orl_dataset folder):
+   
 `python relabel_reward.py --reward_config=reward_sparse.json --path=/home/fabian/msc/f110_dope/ws_release/datasets_1412.zarr`
 
 4) In run_ope you can definitely run two OPE methods (FQE and DR). The others are maybe not running and not tested in this new release enviroment. I changed the reward config so MB is most likely not working right now.
