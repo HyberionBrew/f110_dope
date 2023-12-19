@@ -79,6 +79,9 @@ def main(args):
         progress_sin = []
         log_probs=[]
         progress_cos = []
+        theta_sin = []
+        theta_cos = []
+
         action = np.array([0.0,0.0]) # just a zero zero action to get the juicy infos
 
         episode_timestep = 0
@@ -89,10 +92,20 @@ def main(args):
             episode_timestep += 1
             obs, reward, done, truncated, info = eval_env.step(action)
             # add dimension to lidar and previous action
-            for key in obs.keys():
-                obs[key] = np.expand_dims(obs[key], axis=0)
-            _, action, log_prob = model(obs, current_timestep =np.array([episode_timestep]))
-                #action = np.expand_dims(action, axis=0)
+            info_obs = info["observations"]
+            #for key in info_obs.keys():
+            #    info_obs[key] = np.expand_dims(info_obs[key], axis=0)
+            info_obs["lidar_occupancy"] = np.expand_dims(info_obs["lidar_occupancy"], axis=0)
+            print("prev, action", info["observations"]["previous_action"])
+            print(info_obs)
+            print("++++")
+            print(obs)
+            print("---")
+            _, action, log_prob = model(info_obs, current_timestep =np.array([episode_timestep]))
+            #print("action", action)
+            #action = np.expand_dims(action, axis=0)
+            #if timesteps == 30:
+            #    exit()
             log_prob = float(log_prob)
             #print(action)
             new_infos = dict()
@@ -111,6 +124,8 @@ def main(args):
             steerings.append(info["action_raw"][0][0])
             vels.append(info["observations"]["linear_vels_x"])
             rewards.append(reward)
+            theta_sin.append(info["observations"]["theta_sin"])
+            theta_cos.append(info["observations"]["theta_cos"])
 
             if args.render:
                 eval_env.render()
@@ -118,6 +133,20 @@ def main(args):
                     discounts = np.array([0.99**i for i in range(len(rewards))])
                     discounted = np.array(rewards) * discounts
                     print("return:" , np.sum(discounted))
+                    theta = np.arctan2(theta_sin, theta_cos)
+
+                    plt.plot(vels)
+                    plt.title("velocities")
+                    plt.show()
+             
+                    plt.plot(rewards)
+                    plt.title("rewards")
+                    plt.show()
+
+                    plt.plot(theta)
+                    plt.title("theta")
+                    plt.show()
+
                     plt.plot(discounted)
                     plt.xlabel("timesteps")
                     plt.ylabel("discounted reward")
