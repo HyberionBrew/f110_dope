@@ -111,6 +111,7 @@ def main(args):
             new_infos = dict()
             new_infos["lidar_timestamp"] = 0.0
             new_infos["pose_timestamp"] = 0.0
+            print(action)
             if args.record:
                 with open(f"{args.dataset}/{model_name}", 'ab') as f:
                     pkl.dump((action, info["observations"], 

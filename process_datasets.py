@@ -65,7 +65,7 @@ def main(args):
                 obs_group.create_group(key)
 
         infos_group = root.create_group('infos')
-        for key in ['lidar_timestamp', 'pose_timestamp']:
+        for key in ['lidar_timestamp', 'pose_timestamp', 'action_timestamp']:
             if key not in infos_group:
                 infos_group.create_group(key)
     # Create an extendible array named "observations"
@@ -86,7 +86,7 @@ def main(args):
         log_probs = []
         collisions = []
         raw_actions = []
-        infos = {key: [] for key in ['lidar_timestamp', 'pose_timestamp']}
+        infos = {key: [] for key in ['lidar_timestamp', 'pose_timestamp', 'action_timestamp']}
         print(f"Processing {file}")
         with open(os.path.join(args.input_folder, file), 'rb') as f:
             while True:
@@ -101,6 +101,8 @@ def main(args):
                         else:
                             obs_lists[key].append(value[0])
                     for key, value in info.items():
+                        #print("key")
+                        #print(value)
                         infos[key].append(value)
                     rewards.append(reward)
                     dones.append(done)
@@ -153,7 +155,8 @@ def main(args):
             truncated = np.array(truncates)
             timesteps = np.array(timesteps)
             model_names = np.array(model_names)
-            print(model_names[-1])
+            #print(model_names)
+            #print(model_names[-1])
             # model_names = np.char.add(model_names, "_____")
             root["actions"] = actions
             root["raw_actions"] = raw_actions
